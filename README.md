@@ -1,6 +1,6 @@
 # 🎵 xiaosongshu
 
-> **本项目是基于 Gemini 3 Pro 协助开发的实验性产物。**
+> **本项目是基于 ai 协助开发的实验性产物。**
 >
 > 这是一个轻量级、高颜值的 FNOS 本地音乐播放器，基于 Flask + 原生 Web 技术构建。
 
@@ -30,19 +30,19 @@
 ### 1. 启动服务
 
 ```bash
-python app/server/app.py --music-library-path ./Music --log-path ./app.log --port 23237
+python app/server/app.py --music-library-path ./Music --log-path ./app.log --port 28999
 ```
 
 参数：
 - `--music-library-path`: 音乐文件存储目录
 - `--log-path`: 日志文件路径
-- `--port`: 服务端口 (默认 23237)
+- `--port`: 服务端口 (默认 28999)
 - `--password`: 设置访问密码
 
 ### 2. 访问应用
 
 请在浏览器中访问：
-👉 `http://localhost:23237`
+👉 `http://localhost:28999`
 
 ## 🛠️ 开源致谢
 
@@ -52,3 +52,23 @@ python app/server/app.py --music-library-path ./Music --log-path ./app.log --por
 *   **色彩算法**: [ColorThief](https://lokeshdhakar.com/projects/color-thief/) (MIT)
 *   **歌词/封面 API**: [LrcApi](https://github.com/HisAtri/LrcApi) (GPL-3.0)
 *   **网易云 API**: [NeteaseCloudMusicApiEnhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) (MIT)
+
+## 🚀 重要说明
+本项目是由2FMusic衍生版本，已修改部分代码，如有冒犯可联系作者
+*   **2FMusic**: [yuexps](https://github.com/yuexps/2FMusic) 
+
+##  项目更改内容
+
+*   **🎧 本地音乐库**
+    *   添加定位歌曲按钮
+    *   添加可以添加到我的歌单
+*   **📱 我的歌单**
+    *   可以创建歌单列表
+*   **📂 灵活目录管理**
+    *   支持添加服务器上的任意文件夹到音乐库，无需重复移动文件。
+    *   修改下载歌曲/歌曲封面/歌词到用户设置的挂载目录（没设置，默认目录）
+    *   以挂载目录添加重新扫描，避免没获取最新数据（一般下载后就会自动刷新）
+*   **☁️ QQ音乐集成**
+    *   集成搜索、高品质下载功能。
+    *   支持链接解析及扫码登录/Cooke登录，轻松同步歌单。（手机验证码没适配，暂不可用）
+    *   QQ音乐服务是内嵌的，和网易云服务不一样（主要不会弄，能力有限）
