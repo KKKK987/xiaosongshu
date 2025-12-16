@@ -4384,21 +4384,70 @@ select:focus {
 
 /* 展开式歌单手机端适配 */
 @media (max-width: 768px) {
+    /* 歌单歌曲列表：和本地音乐一样的列表布局 */
     .playlist-songs-grid {
-        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        display: flex;
+        flex-direction: column;
         gap: 0.6rem;
     }
     
+    /* 歌单歌曲卡片：和本地音乐一样的横向布局 */
     .song-card.mini {
-        padding: 0.4rem;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        padding: 0.6rem;
+        gap: 0.8rem;
+        width: 100%;
+        background: rgba(40, 40, 40, 0.4);
+        height: 4.5rem;
+    }
+    
+    .song-card.mini img {
+        height: 3.2rem;
+        width: 3.2rem;
+        aspect-ratio: auto;
+        margin: 0;
+        flex-shrink: 0;
+    }
+    
+    .song-card.mini .card-info {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 0;
     }
     
     .song-card.mini .card-info .title {
-        font-size: 0.8rem;
+        font-size: 1rem;
+        margin-bottom: 0.2rem;
     }
     
     .song-card.mini .card-info .artist {
-        font-size: 0.7rem;
+        font-size: 0.85rem;
+    }
+    
+    /* 移除按钮：和收藏按钮一样的样式 */
+    .song-card.mini .card-remove-btn {
+        position: static;
+        opacity: 1;
+        background: transparent;
+        margin-left: auto;
+        font-size: 1.2rem;
+        width: 2.5rem;
+        height: 2.5rem;
+        color: var(--text-sub);
+    }
+    
+    /* 待下载徽章调整 */
+    .song-card.mini.pending .pending-badge {
+        position: static;
+        flex-shrink: 0;
+        padding: 0.2rem 0.5rem;
+        font-size: 0.65rem;
+        margin-right: 0.5rem;
     }
     
     .playlist-list-item {

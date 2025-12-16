@@ -1103,6 +1103,7 @@ function renderPlaylists(playlists) {
         <div class="playlist-count">${pl.song_count} 首歌曲</div>
       </div>
       <div class="playlist-actions">
+        <button class="btn-play-all" title="播放全部"><i class="fas fa-play"></i></button>
         <button class="btn-rename" title="重命名"><i class="fas fa-edit"></i></button>
         <button class="btn-delete" title="删除"><i class="fas fa-trash"></i></button>
       </div>
@@ -1116,6 +1117,27 @@ function renderPlaylists(playlists) {
     item.addEventListener('click', (e) => {
       if (!e.target.closest('.playlist-actions')) {
         togglePlaylistExpand(pl.id, pl.name, wrapper, songsArea);
+      }
+    });
+    
+    item.querySelector('.btn-play-all').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        const res = await api.playlists.getSongs(pl.id);
+        if (res.success && res.songs && res.songs.length > 0) {
+          const playableSongs = res.songs.filter(s => state.fullPlaylist.find(f => f.id === s.id));
+          if (playableSongs.length === 0) {
+            showToast('没有可播放的本地歌曲');
+            return;
+          }
+          state.playQueue = playableSongs.map(s => state.fullPlaylist.find(f => f.id === s.id));
+          playTrack(0);
+          showToast(`开始播放 ${playableSongs.length} 首歌曲`);
+        } else {
+          showToast('歌单为空');
+        }
+      } catch (err) {
+        showToast('加载歌单失败');
       }
     });
     
@@ -1180,6 +1202,7 @@ function renderPlaylistSongsInline(songs, pendingSongs, playlistId, container) {
   }
   
   container.innerHTML = '';
+  
   const songsGrid = document.createElement('div');
   songsGrid.className = 'playlist-songs-grid';
   
@@ -1202,8 +1225,12 @@ function renderPlaylistSongsInline(songs, pendingSongs, playlistId, container) {
       if (!e.target.closest('.card-fav-btn')) {
         const fullSong = state.fullPlaylist.find(s => s.id === song.id);
         if (fullSong) {
+          // 使用歌单中的封面信息，合并到完整歌曲信息中
+          const songWithCover = { ...fullSong, cover: song.cover || fullSong.cover };
           const idx = state.fullPlaylist.indexOf(fullSong);
           state.playQueue = [...state.fullPlaylist];
+          // 更新播放队列中对应歌曲的封面
+          state.playQueue[idx] = songWithCover;
           playTrack(idx);
         } else {
           showDownloadSourceDialog(song);
@@ -1211,20 +1238,22 @@ function renderPlaylistSongsInline(songs, pendingSongs, playlistId, container) {
       }
     });
     
-    card.querySelector('.card-fav-btn').addEventListener('click', async (e) => {
+    card.querySelector('.card-fav-btn').addEventListener('click', (e) => {
       e.stopPropagation();
-      try {
-        const res = await api.playlists.removeSong(playlistId, song.id);
-        if (res.success) {
-          showToast('已从歌单移除');
-          card.remove();
-          updatePlaylistSongCount(container);
-        } else {
-          showToast(res.error || '移除失败');
+      showConfirmDialog('移除歌曲', `确定要从歌单中移除<br><b>${song.title}</b> 吗？`, async () => {
+        try {
+          const res = await api.playlists.removeSong(playlistId, song.id);
+          if (res.success) {
+            showToast('已从歌单移除');
+            card.remove();
+            updatePlaylistSongCount(container);
+          } else {
+            showToast(res.error || '移除失败');
+          }
+        } catch (err) {
+          showToast('移除失败');
         }
-      } catch (err) {
-        showToast('移除失败');
-      }
+      });
     });
     
     songsGrid.appendChild(card);
@@ -1265,24 +1294,26 @@ function renderPlaylistSongsInline(songs, pendingSongs, playlistId, container) {
         }
       });
       
-      // 移除待下载歌曲
-      card.querySelector('.card-fav-btn').addEventListener('click', async (e) => {
+      // 移除待下载歌曲（带确认）
+      card.querySelector('.card-fav-btn').addEventListener('click', (e) => {
         e.stopPropagation();
-        try {
-          const res = await fetch(`/api/playlists/${playlistId}/pending/${song.pending_id}`, {
-            method: 'DELETE'
-          });
-          const json = await res.json();
-          if (json.success) {
-            showToast('已从歌单移除');
-            card.remove();
-            updatePlaylistSongCount(container);
-          } else {
-            showToast(json.error || '移除失败');
+        showConfirmDialog('移除歌曲', `确定要从歌单中移除<br><b>${song.title}</b> 吗？`, async () => {
+          try {
+            const res = await fetch(`/api/playlists/${playlistId}/pending/${song.pending_id}`, {
+              method: 'DELETE'
+            });
+            const json = await res.json();
+            if (json.success) {
+              showToast('已从歌单移除');
+              card.remove();
+              updatePlaylistSongCount(container);
+            } else {
+              showToast(json.error || '移除失败');
+            }
+          } catch (err) {
+            showToast('移除失败');
           }
-        } catch (err) {
-          showToast('移除失败');
-        }
+        });
       });
       
       songsGrid.appendChild(card);

@@ -52,6 +52,7 @@ python app/server/app.py --music-library-path ./Music --log-path ./app.log --por
 *   **色彩算法**: [ColorThief](https://lokeshdhakar.com/projects/color-thief/) (MIT)
 *   **歌词/封面 API**: [LrcApi](https://github.com/HisAtri/LrcApi) (GPL-3.0)
 *   **网易云 API**: [NeteaseCloudMusicApiEnhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced) (MIT)
+*   **企鹅 API**: [QQMusicApi](https://github.com/L-1124/QQMusicApi) (MIT)
 
 ## 🚀 重要说明
 本项目是由2FMusic衍生版本，已修改部分代码，如有冒犯可联系作者

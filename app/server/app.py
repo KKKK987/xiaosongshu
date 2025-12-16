@@ -421,6 +421,7 @@ def init_db():
                     playlist_id INTEGER NOT NULL,
                     song_id TEXT NOT NULL,
                     added_at REAL,
+                    sort_order INTEGER DEFAULT 0,
                     FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
                     UNIQUE(playlist_id, song_id)
                 )
@@ -439,11 +440,20 @@ def init_db():
                     cover TEXT,
                     source TEXT DEFAULT 'qq',
                     added_at REAL,
+                    sort_order INTEGER DEFAULT 0,
                     FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
                     UNIQUE(playlist_id, qq_mid),
                     UNIQUE(playlist_id, netease_id)
                 )
             ''')
+            
+            # 迁移：为旧表添加 sort_order 字段
+            try:
+                conn.execute('ALTER TABLE playlist_songs ADD COLUMN sort_order INTEGER DEFAULT 0')
+            except: pass
+            try:
+                conn.execute('ALTER TABLE playlist_pending_songs ADD COLUMN sort_order INTEGER DEFAULT 0')
+            except: pass
             
             # 清理错误索引的非音频文件
             try:
@@ -762,6 +772,37 @@ def embed_lyrics_to_file(audio_path: str, lrc_text: str):
 
 AUDIO_EXTS = ('.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a')
 
+def check_cover_exists(file_path: str, base_name: str = None) -> bool:
+    """检查封面是否存在，搜索所有可能的位置"""
+    if not base_name:
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+    base_path = os.path.splitext(file_path)[0]
+    
+    # 1. 歌曲同目录下的同名 jpg
+    if os.path.exists(base_path + ".jpg"):
+        return True
+    
+    # 2. 歌曲所在目录的 covers 子目录
+    song_dir = os.path.dirname(file_path)
+    if os.path.exists(os.path.join(song_dir, 'covers', f"{base_name}.jpg")):
+        return True
+    
+    # 3. 所有挂载目录的 covers 子目录
+    try:
+        with get_db() as conn:
+            rows = conn.execute("SELECT path FROM mount_points").fetchall()
+            for r in rows:
+                if r['path'] and os.path.exists(os.path.join(r['path'], 'covers', f"{base_name}.jpg")):
+                    return True
+    except Exception:
+        pass
+    
+    # 4. 默认音乐库目录的 covers 子目录
+    if os.path.exists(os.path.join(MUSIC_LIBRARY_PATH, 'covers', f"{base_name}.jpg")):
+        return True
+    
+    return False
+
 def index_single_file(file_path):
     """单独索引一个文件。"""
     try:
@@ -774,12 +815,10 @@ def index_single_file(file_path):
         meta = get_metadata(file_path)
         sid = generate_song_id(file_path)
         base_name = os.path.splitext(os.path.basename(file_path))[0]
-        base_path = os.path.splitext(file_path)[0]
-        cover_path = os.path.join(MUSIC_LIBRARY_PATH, 'covers', f"{base_name}.jpg")
-        has_cover = 0
-        if os.path.exists(base_path + ".jpg") or os.path.exists(cover_path):
-            has_cover = 1
-        else:
+        
+        # 使用统一的封面检测函数
+        has_cover = 1 if check_cover_exists(file_path, base_name) else 0
+        if not has_cover:
             # 尝试提取内嵌封面
             if extract_embedded_cover(file_path, base_name):
                 has_cover = 1
@@ -881,9 +920,9 @@ def scan_library_incremental():
                 def process_file_metadata(info):
                     meta = get_metadata(info['path'])
                     sid = generate_song_id(info['path'])
-                    # 封面逻辑
-                    base_path = os.path.splitext(info['path'])[0]
-                    has_cover = 1 if os.path.exists(base_path + ".jpg") or os.path.exists(os.path.join(MUSIC_LIBRARY_PATH, 'covers', f"{os.path.basename(base_path)}.jpg")) else 0
+                    base_name = os.path.splitext(info['filename'])[0]
+                    # 使用统一的封面检测函数
+                    has_cover = 1 if check_cover_exists(info['path'], base_name) else 0
                     return (sid, info['path'], info['filename'], meta['title'], meta['artist'], meta['album'], info['mtime'], info['size'], has_cover)
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
@@ -1458,21 +1497,34 @@ def get_lyrics_api():
     if actual_path:
         local_dir = os.path.dirname(actual_path)
         base_name = os.path.splitext(os.path.basename(actual_path))[0]
-        # Check adjacent .lrc first
-        adj_lrc = os.path.join(local_dir, f"{base_name}.lrc")
-        if os.path.exists(adj_lrc): 
-            lrc_path = adj_lrc
-        else:
-            # Check lyrics folder - 优先检查挂载目录，然后检查默认目录
-            download_dir = get_default_download_dir()
-            mount_lrc = os.path.join(download_dir, 'lyrics', f"{base_name}.lrc")
-            if os.path.exists(mount_lrc):
-                lrc_path = mount_lrc
-            elif download_dir != MUSIC_LIBRARY_PATH:
-                # 兼容旧数据：检查默认目录
-                default_lrc = os.path.join(MUSIC_LIBRARY_PATH, 'lyrics', f"{base_name}.lrc")
-                if os.path.exists(default_lrc):
-                    lrc_path = default_lrc
+        
+        # 构建搜索路径列表
+        search_paths = []
+        
+        # 1.1 歌曲同目录的 .lrc 文件
+        search_paths.append(os.path.join(local_dir, f"{base_name}.lrc"))
+        
+        # 1.2 歌曲所在目录的 lyrics 子目录
+        search_paths.append(os.path.join(local_dir, 'lyrics', f"{base_name}.lrc"))
+        
+        # 1.3 所有挂载目录的 lyrics 子目录
+        try:
+            with get_db() as conn:
+                rows = conn.execute("SELECT path FROM mount_points").fetchall()
+                for r in rows:
+                    if r['path']:
+                        search_paths.append(os.path.join(r['path'], 'lyrics', f"{base_name}.lrc"))
+        except Exception:
+            pass
+        
+        # 1.4 默认音乐库目录的 lyrics 子目录
+        search_paths.append(os.path.join(MUSIC_LIBRARY_PATH, 'lyrics', f"{base_name}.lrc"))
+        
+        # 查找第一个存在的歌词文件
+        for path in search_paths:
+            if os.path.exists(path):
+                lrc_path = path
+                break
 
     if lrc_path and os.path.exists(lrc_path):
         try:
@@ -1486,11 +1538,10 @@ def get_lyrics_api():
     if actual_path:
         embedded_lrc = extract_embedded_lyrics(actual_path)
         if embedded_lrc:
-            # Save to cache if possible
+            # Save to cache if possible - 保存到歌曲所在目录
             try:
-                # 保存到挂载目录
-                lyrics_base_dir = get_default_download_dir()
-                save_dir = os.path.join(lyrics_base_dir, 'lyrics')
+                local_dir = os.path.dirname(actual_path)
+                save_dir = os.path.join(local_dir, 'lyrics')
                 os.makedirs(save_dir, exist_ok=True)
                 base_name = os.path.splitext(os.path.basename(actual_path))[0]
                 save_path = os.path.join(save_dir, f"{base_name}.lrc")
@@ -1507,13 +1558,15 @@ def get_lyrics_api():
         f"https://lrcapi.msfxp.top/lyrics?artist={quote(artist or '')}&title={quote(title)}"
     ]
     
-    # Determine save path for network lyrics - 保存到挂载目录
-    lyrics_base_dir = get_default_download_dir()
+    # Determine save path for network lyrics - 保存到歌曲所在目录
     save_lrc_path = None
     if actual_path:
+        local_dir = os.path.dirname(actual_path)
         base_name = os.path.splitext(os.path.basename(actual_path))[0]
-        save_lrc_path = os.path.join(lyrics_base_dir, 'lyrics', f"{base_name}.lrc")
+        save_lrc_path = os.path.join(local_dir, 'lyrics', f"{base_name}.lrc")
     elif filename:
+        # 如果没有实际路径，保存到默认目录
+        lyrics_base_dir = get_default_download_dir()
         save_lrc_path = os.path.join(lyrics_base_dir, 'lyrics', f"{os.path.splitext(os.path.basename(filename))[0]}.lrc")
 
     for idx, api_url in enumerate(api_urls):
@@ -1549,19 +1602,7 @@ def get_album_art_api():
     filename = unquote(filename)
     base_name = os.path.splitext(os.path.basename(filename))[0]
     
-    # 使用挂载目录作为下载目录
-    cover_base_dir = get_default_download_dir()
-    local_path = os.path.join(cover_base_dir, 'covers', f"{base_name}.jpg")
-    
-    # 同时检查默认目录（兼容旧数据）
-    if os.path.exists(local_path):
-        return jsonify({'success': True, 'album_art': f"/api/music/covers/{quote(base_name)}.jpg?filename={quote(base_name)}"})
-    if cover_base_dir != MUSIC_LIBRARY_PATH:
-        default_path = os.path.join(MUSIC_LIBRARY_PATH, 'covers', f"{base_name}.jpg")
-        if os.path.exists(default_path):
-            return jsonify({'success': True, 'album_art': f"/api/music/covers/{quote(base_name)}.jpg?filename={quote(base_name)}"})
-
-    # 优先尝试从音频内嵌封面提取
+    # 先获取歌曲的实际路径
     actual_path = None
     if os.path.isabs(filename) and os.path.exists(filename):
         actual_path = filename
@@ -1573,8 +1614,42 @@ def get_album_art_api():
                     actual_path = row['path']
         except Exception as e:
             logger.warning(f"查询歌曲路径失败: {e}")
+    
+    # 构建搜索路径列表
+    search_paths = []
+    
+    # 1. 歌曲所在目录的 covers 子目录
+    if actual_path:
+        local_dir = os.path.dirname(actual_path)
+        search_paths.append(os.path.join(local_dir, 'covers', f"{base_name}.jpg"))
+    
+    # 2. 所有挂载目录的 covers 子目录
+    try:
+        with get_db() as conn:
+            rows = conn.execute("SELECT path FROM mount_points").fetchall()
+            for r in rows:
+                if r['path']:
+                    search_paths.append(os.path.join(r['path'], 'covers', f"{base_name}.jpg"))
+    except Exception:
+        pass
+    
+    # 3. 默认音乐库目录的 covers 子目录
+    search_paths.append(os.path.join(MUSIC_LIBRARY_PATH, 'covers', f"{base_name}.jpg"))
+    
+    # 查找第一个存在的封面文件
+    for path in search_paths:
+        if os.path.exists(path):
+            return jsonify({'success': True, 'album_art': f"/api/music/covers/{quote(base_name)}.jpg?filename={quote(filename)}"})
 
-    if actual_path and extract_embedded_cover(actual_path, base_name, cover_base_dir):
+    # 确定封面保存目录（优先保存到歌曲所在目录）
+    if actual_path:
+        cover_save_dir = os.path.join(os.path.dirname(actual_path), 'covers')
+    else:
+        cover_save_dir = os.path.join(get_default_download_dir(), 'covers')
+    local_path = os.path.join(cover_save_dir, f"{base_name}.jpg")
+    
+    # 尝试从音频内嵌封面提取
+    if actual_path and extract_embedded_cover(actual_path, base_name, os.path.dirname(actual_path)):
         try:
             if not os.path.isabs(filename):
                 with get_db() as conn:
@@ -1582,7 +1657,7 @@ def get_album_art_api():
                     conn.commit()
         except Exception:
             pass
-        return jsonify({'success': True, 'album_art': f"/api/music/covers/{quote(base_name)}.jpg?filename={quote(base_name)}"})
+        return jsonify({'success': True, 'album_art': f"/api/music/covers/{quote(base_name)}.jpg?filename={quote(filename)}"})
 
     # 网络获取并保存
     api_urls = [
@@ -1591,7 +1666,7 @@ def get_album_art_api():
     ]
     
     # 确保封面目录存在
-    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    os.makedirs(cover_save_dir, exist_ok=True)
     
     for idx, api_url in enumerate(api_urls):
         try:
@@ -1610,7 +1685,7 @@ def get_album_art_api():
                         conn.execute("UPDATE songs SET has_cover=1 WHERE filename=?", (filename,))
                         conn.commit()
                         
-                return jsonify({'success': True, 'album_art': f"/api/music/covers/{quote(base_name)}.jpg?filename={quote(base_name)}"})
+                return jsonify({'success': True, 'album_art': f"/api/music/covers/{quote(base_name)}.jpg?filename={quote(filename)}"})
             else:
                 logger.warning(f"封面API响应异常: {api_url}, 状态码: {resp.status_code}")
         except:
@@ -1747,11 +1822,37 @@ def clear_metadata(song_id=None):
 @app.route('/api/music/covers/<cover_name>')
 def get_cover(cover_name):
     cover_name = unquote(cover_name)
-    # 优先从挂载目录查找，然后从默认目录查找
-    download_dir = get_default_download_dir()
-    search_dirs = [os.path.join(download_dir, 'covers')]
-    if download_dir != MUSIC_LIBRARY_PATH:
-        search_dirs.append(os.path.join(MUSIC_LIBRARY_PATH, 'covers'))
+    filename = request.args.get('filename', '')
+    
+    # 构建搜索目录列表
+    search_dirs = []
+    
+    # 1. 如果提供了 filename，尝试从歌曲所在目录的 covers 子目录查找
+    if filename:
+        try:
+            with get_db() as conn:
+                row = conn.execute('SELECT path FROM songs WHERE filename = ?', (unquote(filename),)).fetchone()
+                if row and row['path']:
+                    song_dir = os.path.dirname(row['path'])
+                    search_dirs.append(os.path.join(song_dir, 'covers'))
+        except Exception:
+            pass
+    
+    # 2. 从所有挂载目录的 covers 子目录查找
+    try:
+        with get_db() as conn:
+            rows = conn.execute("SELECT path FROM mount_points").fetchall()
+            for r in rows:
+                if r['path']:
+                    search_dirs.append(os.path.join(r['path'], 'covers'))
+    except Exception:
+        pass
+    
+    # 3. 从默认音乐库目录查找
+    search_dirs.append(os.path.join(MUSIC_LIBRARY_PATH, 'covers'))
+    
+    # 去重
+    search_dirs = list(dict.fromkeys(search_dirs))
     
     for cover_dir in search_dirs:
         path = os.path.join(cover_dir, cover_name)
@@ -4863,9 +4964,9 @@ def create_local_playlist():
             )
             playlist_id = cursor.lastrowid
             
-            # 保存待下载歌曲
+            # 保存待下载歌曲（保持原始顺序）
             pending_count = 0
-            for song in pending_songs:
+            for idx, song in enumerate(pending_songs):
                 try:
                     qq_mid = song.get('mid') or song.get('qq_mid')
                     netease_id = song.get('netease_id')
@@ -4873,8 +4974,8 @@ def create_local_playlist():
                     
                     conn.execute('''
                         INSERT OR IGNORE INTO playlist_pending_songs 
-                        (playlist_id, qq_mid, netease_id, title, artist, album, cover, source, added_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (playlist_id, qq_mid, netease_id, title, artist, album, cover, source, added_at, sort_order)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         playlist_id,
                         qq_mid,
@@ -4884,7 +4985,8 @@ def create_local_playlist():
                         song.get('album', ''),
                         song.get('cover', ''),
                         source,
-                        now
+                        now,
+                        idx  # 保存原始顺序
                     ))
                     pending_count += 1
                 except Exception as e:
@@ -4961,13 +5063,13 @@ def get_playlist_songs(playlist_id):
             if not playlist:
                 return jsonify({'success': False, 'error': '歌单不存在'})
             
-            # 获取本地歌曲列表
+            # 获取本地歌曲列表（按原始顺序排序）
             rows = conn.execute('''
-                SELECT s.id, s.path, s.filename, s.title, s.artist, s.album, s.has_cover, ps.added_at
+                SELECT s.id, s.path, s.filename, s.title, s.artist, s.album, s.has_cover, ps.added_at, ps.sort_order
                 FROM playlist_songs ps
                 JOIN songs s ON ps.song_id = s.id
                 WHERE ps.playlist_id = ?
-                ORDER BY ps.added_at DESC
+                ORDER BY ps.sort_order ASC, ps.added_at ASC
             ''', (playlist_id,)).fetchall()
             
             songs = []
@@ -4988,12 +5090,12 @@ def get_playlist_songs(playlist_id):
                     'is_local': True
                 })
             
-            # 获取待下载歌曲列表
+            # 获取待下载歌曲列表（按原始顺序排序）
             pending_rows = conn.execute('''
-                SELECT id, qq_mid, netease_id, title, artist, album, cover, source, added_at
+                SELECT id, qq_mid, netease_id, title, artist, album, cover, source, added_at, sort_order
                 FROM playlist_pending_songs
                 WHERE playlist_id = ?
-                ORDER BY added_at DESC
+                ORDER BY sort_order ASC, added_at ASC
             ''', (playlist_id,)).fetchall()
             
             pending_songs = []
@@ -5050,11 +5152,17 @@ def add_song_to_playlist(playlist_id):
             if not song:
                 return jsonify({'success': False, 'error': '歌曲不存在'})
             
-            # 添加到歌单（忽略重复）
+            # 添加到歌单（忽略重复），新歌曲排在最后
             try:
+                # 获取当前最大的 sort_order
+                max_order = conn.execute(
+                    'SELECT COALESCE(MAX(sort_order), -1) FROM playlist_songs WHERE playlist_id = ?',
+                    (playlist_id,)
+                ).fetchone()[0]
+                
                 conn.execute(
-                    'INSERT OR IGNORE INTO playlist_songs (playlist_id, song_id, added_at) VALUES (?, ?, ?)',
-                    (playlist_id, song_id, now)
+                    'INSERT OR IGNORE INTO playlist_songs (playlist_id, song_id, added_at, sort_order) VALUES (?, ?, ?, ?)',
+                    (playlist_id, song_id, now, max_order + 1)
                 )
                 conn.execute('UPDATE playlists SET updated_at = ? WHERE id = ?', (now, playlist_id))
                 conn.commit()
