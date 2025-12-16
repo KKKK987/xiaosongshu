@@ -1,0 +1,17 @@
+appname               = xiaosongshu-preview
+version               = 0.0.2
+display_name          = xiaosongshu Preview
+desc                  = """
+<p><b>xiaosongshu 预览扩展 (CGI版)</b></p>
+<p>Web端文件管理器双击预览播放拓展。</p>
+<p>依赖：xiaosongshu</p>
+<p style="color: #ff4d4d; font-weight: bold;">注意：此拓展会导致移动端APP音乐播放器失效！</p>
+"""
+arch                  = x86_64
+maintainer            = yuexps
+maintainer_url        = https://github.com/yuexps/xiaosongshu
+distributor           = yuexps
+distributor_url       = https://www.2fstore.cfd
+source                = thirdparty
+desktop_uidir         = ui
+install_dep_apps      = xiaosongshu

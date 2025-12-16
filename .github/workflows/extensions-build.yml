@@ -1,0 +1,60 @@
+name: Build Extensions
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'extensions/**'
+
+jobs:
+  build-extensions:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install fnpack
+      run: |
+        wget https://static2.fnnas.com/fnpack/fnpack-1.0.4-linux-amd64 -O fnpack
+        chmod +x fnpack
+        sudo mv fnpack /usr/local/bin/
+
+    # ===============================
+    # Build xiaosongshu Preview (CGI)
+    # ===============================
+    - name: Build Preview (CGI)
+      id: build_preview_cgi
+      run: |
+        echo "📦 Building Preview Extension (CGI)..."
+        cd extensions/preview-cgi
+        
+        # Compile C Code
+        echo "🔨 Compiling index.c..."
+        gcc -static -O2 -o app/ui/index.cgi app/ui/index.c
+        chmod +x app/ui/index.cgi
+        rm app/ui/index.c
+        
+        # Package
+        fnpack build
+        
+        # Get Version from Manifest
+        VERSION=$(grep "^version" manifest | awk -F'=' '{print $2}' | tr -d '[:space:]')
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        PKG_NAME="xiaosongshu-preview-cgi-${VERSION}-${SHORT_SHA}.fpk"
+        
+        # Find and Move
+        if [ -f "xiaosongshu-preview.fpk" ]; then
+          mv xiaosongshu-preview.fpk "../../$PKG_NAME"
+        else
+          mv *.fpk "../../$PKG_NAME" || echo "Warning: No fpk found!"
+        fi
+        
+        cd ../..
+        echo "pkg_name=${PKG_NAME}" >> $GITHUB_OUTPUT
+        echo "✅ Built: $PKG_NAME"
+
+    - name: Upload CGI Extension
+      uses: actions/upload-artifact@v4
+      with:
+        name: xiaosongshu-preview-cgi
+        path: ${{ steps.build_preview_cgi.outputs.pkg_name }}

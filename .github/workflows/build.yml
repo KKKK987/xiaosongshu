@@ -1,0 +1,255 @@
+name: Auto Build xiaosongshu
+
+on:
+  workflow_dispatch: # 允许手动触发
+  push:
+    paths:
+      - 'manifest'   # 只有当 manifest 版本号发生变动时才自动触发构建
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    # 0. 检查 manifest 版本号是否变更
+    - name: Check Version Change
+      if: github.event_name == 'push'
+      run: |
+        VER_NOW=$(grep "^version" manifest | awk -F'=' '{print $2}' | xargs)
+        # 获取上一 commit 的文件内容 (HEAD^:manifest)
+        VER_OLD=$(git show HEAD^:manifest 2>/dev/null | grep "^version" | awk -F'=' '{print $2}' | xargs || echo "")
+        
+        echo "Current Version: $VER_NOW"
+        echo "Previous Version: $VER_OLD"
+        
+        if [ "$VER_NOW" == "$VER_OLD" ]; then
+          echo "⛔ Version number not changed in manifest. Skipping build."
+          # 手动失败以停止流程
+          exit 1
+        fi
+        echo "✅ Version change detected."
+
+    # 1. 从 manifest 提取版本号 + Commit Hash
+    - name: Extract Version from Manifest
+      id: version
+      run: |
+        VERSION_NUM=$(grep "^version" manifest | awk -F'=' '{print $2}' | xargs)
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        
+        # 组合版本号: 0.0.1-a1b2c3d
+        VERSION="${VERSION_NUM}-${SHORT_SHA}"
+        
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "🎯 Detected version: ${VERSION}"
+
+    # 1.1 生成变更日志 (Since last tag)
+    - name: Generate Changelog
+      id: changelog
+      run: |
+        echo "📜 Generating changelog..."
+        # 尝试找到最近的一个 Tag
+        PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        
+        if [ -z "$PREV_TAG" ]; then
+          echo "No previous tag found. Logging last 20 commits."
+          LOGS=$(git log --pretty=format:"- %s (%h) @%an" -n 20)
+        else
+          echo "Found previous tag: $PREV_TAG"
+          # 简单处理：显示该 Tag 之后的所有变更
+          LOGS=$(git log --pretty=format:"- %s (%h) @%an" ${PREV_TAG}..HEAD)
+        fi
+        
+        # 如果日志为空（例如没有新提交），显示 "No changes detected"
+        if [ -z "$LOGS" ]; then
+          LOGS="- No changes detected or rebuild of same commit."
+        fi
+        
+        # 处理多行输出到 GITHUB_OUTPUT
+        {
+          echo "logs<<EOF"
+          echo "$LOGS"
+          echo "EOF"
+        } >> $GITHUB_OUTPUT
+
+    # 2. 设置 Python 环境 (启用缓存)
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    # 3. 安装编译工具和环境依赖
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        
+        # 为了让 PyInstaller 能正确分析依赖，在 Runner 环境中安装它们
+        if [ -f app/server/requirements.txt ]; then 
+           pip install -r app/server/requirements.txt
+        fi
+
+    # 4. 安装 fnpack
+    - name: Install fnpack
+      run: |
+        wget https://static2.fnnas.com/fnpack/fnpack-1.0.4-linux-amd64 -O fnpack
+        chmod +x fnpack
+        sudo mv fnpack /usr/local/bin/
+
+    # ==========================================
+    # 5. 构建第一个版本：源码版 (Python Version)
+    # ==========================================
+    - name: Build Source Package (Requires Python)
+      id: build_source
+      run: |
+        echo "📦 Building Source (Python) Package..."
+        fnpack build
+        
+        SOURCE_FPK_NAME="xiaosongshu-${{ steps.version.outputs.version }}-python.fpk"
+        
+        if [ -f "xiaosongshu.fpk" ]; then
+          mv xiaosongshu.fpk "$SOURCE_FPK_NAME"
+        else
+          echo "Error: xiaosongshu.fpk not found!"
+          exit 1
+        fi
+        
+        echo "source_pkg=${SOURCE_FPK_NAME}" >> $GITHUB_OUTPUT
+        echo "✅ Generated: $SOURCE_FPK_NAME"
+
+    # ==========================================
+    # 6. 环境转换：编译二进制 & 清理源码
+    # ==========================================
+    - name: Compile and Cleanup for Binary
+      run: |
+        echo "🔨 Compiling app.py to binary..."
+        pyinstaller --clean --onefile --name "app" --icon="app/www/static/images/ICON_256.PNG" --distpath "app/server" "app/server/app.py"
+        
+        chmod +x app/server/app
+        
+        echo "🧹 Cleaning up source files..."
+        rm -rf build/
+        rm -f app.spec
+        
+        # 删除源码和依赖库
+        rm -f app/server/app.py
+        rm -rf app/server/lib
+        
+        echo "📝 Modifying manifest (Remove Python dependency)..."
+        sed -i '/install_dep_apps/d' manifest
+        
+        echo "✅ Ready for Binary Build."
+
+    # ==========================================
+    # 7. 构建第二个版本：二进制版 (Binary Version)
+    # ==========================================
+    - name: Build Binary Package (Standalone)
+      id: build_binary
+      run: |
+        echo "📦 Building Binary (Standalone) Package..."
+        fnpack build
+        
+        BINARY_FPK_NAME="xiaosongshu-${{ steps.version.outputs.version }}-amd64.fpk"
+        
+        if [ -f "xiaosongshu.fpk" ]; then
+          mv xiaosongshu.fpk "$BINARY_FPK_NAME"
+        else
+          echo "Error: xiaosongshu.fpk not found!"
+          exit 1
+        fi
+        
+        echo "binary_pkg=${BINARY_FPK_NAME}" >> $GITHUB_OUTPUT
+        echo "✅ Generated: $BINARY_FPK_NAME"
+
+    # ===============================
+    # 8. 构建 xiaosongshu Preview (CGI)
+    # ===============================
+    - name: Build Preview (CGI)
+      id: build_preview_cgi
+      run: |
+        echo "📦 Building Preview Extension (CGI)..."
+        cd extensions/preview-cgi
+        
+        # Compile C Code
+        echo "🔨 Compiling index.c..."
+        gcc -static -O2 -o app/ui/index.cgi app/ui/index.c
+        chmod +x app/ui/index.cgi
+        rm app/ui/index.c
+        
+        # Package
+        fnpack build
+        
+        # Get Version from Manifest
+        VERSION=$(grep "^version" manifest | awk -F'=' '{print $2}' | tr -d '[:space:]')
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        PKG_NAME="xiaosongshu-preview-cgi-${VERSION}-${SHORT_SHA}.fpk"
+        
+        # Find and Move
+        if [ -f "xiaosongshu-preview.fpk" ]; then
+          mv xiaosongshu-preview.fpk "../../$PKG_NAME"
+        else
+          mv *.fpk "../../$PKG_NAME" || echo "Warning: No fpk found!"
+        fi
+        
+        cd ../..
+        echo "pkg_name=${PKG_NAME}" >> $GITHUB_OUTPUT
+        echo "✅ Built: $PKG_NAME"
+
+    # 9. 删除旧的同版本 Release
+    - name: Delete old Pre-release
+      run: |
+        TAG="v${{ steps.version.outputs.version }}-pre"
+        gh release delete "$TAG" --yes || true
+        git push --delete origin "$TAG" || true
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # 10. 创建发布并上传两个文件
+    - name: Create Pre-release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ steps.version.outputs.version }}-pre
+        name: xiaosongshu ${{ steps.version.outputs.version }}
+        body: |
+          ## 🚀 自动构建的测试版
+
+          ### ℹ️ 构建信息
+          - **版本**: ${{ steps.version.outputs.version }}
+          - **触发者**: @${{ github.actor }}
+          - **事件**: ${{ github.event_name }}
+          
+          ### 📝 变更日志
+          ${{ steps.changelog.outputs.logs }}
+
+          ---
+
+          ### 1. 🐍 Python 源码版
+          - **文件**: `${{ steps.build_source.outputs.source_pkg }}`
+          - **依赖**: 依赖 Python 环境 (`python312`)。
+          
+          ### 2. ⚡ 二进制版（推荐）
+          - **文件**: `${{ steps.build_binary.outputs.binary_pkg }}`
+          - **依赖**: **无需** Python 环境，开箱即用。
+
+          ### 3. 🗂️ 预览播放拓展（可选）
+          - **文件**: `${{ steps.build_preview_cgi.outputs.pkg_name }}`
+          - **说明**: Web端文件管理器双击预览播放拓展，注意：此拓展会导致移动端APP音乐播放器失效！
+
+          > ⚠️ **重要提示**：为避免兼容性问题，安装新版前建议**完全卸载旧版本并清除数据**！
+
+        files: |
+          ${{ steps.build_source.outputs.source_pkg }}
+          ${{ steps.build_binary.outputs.binary_pkg }}
+          ${{ steps.build_preview_cgi.outputs.pkg_name }}
+        prerelease: true
+        make_latest: legacy
+        draft: false

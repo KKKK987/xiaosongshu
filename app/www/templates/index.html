@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+    <title>xiaosongshu</title>
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}" crossorigin="use-credentials">
+
+    <meta name="mobile-web-app-capable" content="yes">
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="xiaosongshu">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/ICON_256.PNG') }}">
+
+    <meta name="theme-color" content="#000000">
+
+    <script>
+        (function () {
+            window.applyScale = function () {
+                const saved = localStorage.getItem('xiaosongshu_ui_scale');
+                if (saved) {
+                    document.documentElement.style.setProperty('--ui-scale', saved);
+                } else if (window.innerWidth > 768) {
+                    let scale = Math.min(Math.max(window.innerWidth / 1440, 0.8), 1.2);
+                    document.documentElement.style.setProperty('--ui-scale', scale.toFixed(3));
+                } else {
+                    document.documentElement.style.setProperty('--ui-scale', '1.0');
+                }
+            };
+            window.applyScale();
+            let rafId;
+            window.addEventListener('resize', () => {
+                if (rafId) cancelAnimationFrame(rafId);
+                rafId = requestAnimationFrame(window.applyScale);
+            });
+        })();
+    </script>
+
+    <link rel="icon" href="{{ url_for('static', filename='images/ICON_256.PNG') }}">
+    <script src="{{ url_for('static', filename='js/lib/color-thief.umd.js') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/font-awesome/all.min.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+
+    <div id="app">
+        <aside id="sidebar" class="glass-panel">
+            <div class="brand">
+                <a href="https://github.com/yuexps/xiaosongshu" target="_blank" class="icon-btn" title="View on GitHub"
+                    style="color: var(--text-main); display: flex; align-items: center; text-decoration: none;">
+                    <i class="fab fa-github" style="font-size: 2rem;"></i>
+                </a>
+                <span>小松鼠</span>
+            </div>
+            <nav style="flex: 1;">
+                <ul>
+                    <li class="active" id="nav-local"><i class="fas fa-music"></i> <span>本地音乐</span></li>
+                    <li id="nav-fav"><i class="fas fa-heart"></i> <span>我的收藏</span></li>
+                    <li id="nav-playlists"><i class="fas fa-list"></i> <span>我的歌单</span></li>
+                    <li id="nav-mount"><i class="fas fa-network-wired"></i> <span>目录管理</span></li>
+                    <li id="nav-netease"><i class="fas fa-cloud-download-alt"></i> <span>网易下载</span></li>
+                    <li id="nav-qqmusic"><i class="fab fa-qq"></i> <span>QQ音乐</span></li>
+                    <li id="nav-upload"><i class="fas fa-cloud-upload-alt"></i> <span>上传音乐</span></li>
+                </ul>
+            </nav>
+            <nav>
+                <ul>
+                    <li id="nav-settings"><i class="fas fa-cog"></i> <span>设置</span></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main id="main-content">
+            <header class="top-bar">
+                <button id="mobile-menu-btn"><i class="fas fa-bars"></i></button>
+                <div id="mobile-page-title" class="mobile-title">本地音乐</div>
+            </header>
+
+            <div class="content-scroll">
+                <div id="view-player">
+                    <div class="content-header">
+                        <div class="section-title" id="list-title">歌曲列表</div>
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="search-input" placeholder="搜索本地歌曲...">
+                        </div>
+                    </div>
+                    <div class="song-list" id="song-list-container">
+                        <div class="loading">
+                            <div class="loading-box">
+                                <div class="loading-spinner"></div>
+                                <div class="loading-text">Loading...</div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 定位当前播放歌曲按钮 -->
+                    <button id="btn-locate-playing" class="locate-playing-btn" title="定位当前播放歌曲">
+                        <i class="fas fa-crosshairs"></i>
+                    </button>
+                </div>
+
+                <div id="view-playlists" class="hidden">
+                    <div class="content-header">
+                        <div class="section-title" id="playlists-title">我的歌单</div>
+                        <button id="btn-create-playlist" class="btn-primary" style="padding: 0.5rem 1rem;">
+                            <i class="fas fa-plus"></i> 新建歌单
+                        </button>
+                    </div>
+                    
+                    <!-- 歌单列表（展开式） -->
+                    <div class="playlists-grid" id="playlists-container">
+                        <div class="loading-text" style="padding: 4rem 0; opacity: 0.6;">加载中...</div>
+                    </div>
+                </div>
+
+                <div id="view-mount" class="hidden">
+                    <div class="section-title">音乐目录管理</div>
+
+                    <div class="mount-add-section glass-panel">
+                        <h3><i class="fas fa-folder-plus"></i> 添加服务器目录</h3>
+                        <p class="mount-hint">输入服务器上的文件夹绝对路径（例:/vol1/1000/music）自动监控并导入。</p>
+                        <div class="mount-input-group">
+                            <input type="text" id="mount-path-input" placeholder="输入绝对路径...">
+                            <button id="btn-add-mount" class="btn-primary">添加</button>
+                        </div>
+                    </div>
+
+                    <div class="section-subtitle" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>已添加目录</span>
+                        <button id="btn-rescan-library" class="btn-normal" style="padding: 0.4rem 0.8rem; font-size: 0.85rem;">
+                            <i class="fas fa-sync-alt"></i> 重新扫描
+                        </button>
+                    </div>
+                    <div id="mount-list-container">
+                        <div class="loading">
+                            <div class="loading-spinner"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="view-netease" class="hidden">
+                    <div class="netease-gate glass-panel hidden" id="netease-config-gate">
+                        <div class="gate-header-block">
+                            <div class="gate-title">配置网易云 API</div>
+                            <div class="gate-desc">请选择一种方式连接网易云音乐 API 服务</div>
+                        </div>
+
+                        <div class="gate-options-container">
+                            <!-- 方式 1: 自动安装 -->
+                            <div class="gate-option-card active-card">
+                                <div class="option-icon-box"><i class="fab fa-docker"></i></div>
+                                <div class="option-content">
+                                    <div class="option-title">自动安装 (推荐)</div>
+                                    <div class="option-desc">服务器必须已安装 Docker 服务。我们将自动为您拉取镜像并启动服务。<br>无需手动操作，自动完成安装
+                                    </div>
+                                </div>
+                                <button id="netease-api-install-btn" class="btn-primary full-width-btn">
+                                    <i class="fas fa-magic"></i> 一键安装 & 连接
+                                </button>
+
+                                <div id="install-progress-container" class="hidden"
+                                    style="width: 100%; margin-top: 1rem;">
+                                    <div
+                                        style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.3rem; color: rgba(255,255,255,0.8);">
+                                        <span id="install-step-text">准备就绪</span>
+                                        <span id="install-percent-text">0%</span>
+                                    </div>
+                                    <div
+                                        style="height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;">
+                                        <div id="install-progress-bar"
+                                            style="width: 0%; height: 100%; background: var(--primary); transition: width 0.3s ease;">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 方式 2: 手动配置 -->
+                            <div class="gate-option-card">
+                                <div class="option-icon-box"><i class="fas fa-network-wired"></i></div>
+                                <div class="option-content">
+                                    <div class="option-title">手动连接</div>
+                                    <div class="option-desc">如果无法自动安装，请在 FnDepot 添加源 https://github.com/yuexps/FnDepot
+                                        <br>手动下载
+                                        网易云API 应用，然后输入地址连接。
+                                    </div>
+                                </div>
+                                <div class="gate-manual-form">
+                                    <input type="text" id="netease-api-gate-input" placeholder="http://localhost:28998"
+                                        value="http://localhost:28998">
+                                    <button id="netease-api-gate-btn" class="btn-normal full-width-btn">检测并连接</button>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                    <div class="netease-container-new" id="netease-content">
+                        <header class="netease-header">
+                            <div class="netease-title-large">网易云下载</div>
+                            <div class="netease-header-right">
+                                <div id="netease-user-display" class="netease-user-display hidden">
+                                    <div class="user-text">
+                                        <div id="netease-user-name" class="user-name">User</div>
+                                        <div class="user-tag">VIP</div>
+                                    </div>
+                                    <div class="vip-avatar-ring-wrapper">
+                                        <div class="vip-badge-icon hidden" id="netease-vip-badge">V</div>
+                                        <div class="" id="netease-avatar-wrapper">
+                                            <img id="netease-user-avatar" src="" alt="Avatar">
+                                        </div>
+                                    </div>
+                                    <i class="fas fa-chevron-down user-dropdown-caret"></i>
+                                    <div class="netease-user-menu hidden" id="netease-user-menu">
+                                        <button id="netease-menu-logout" class="menu-btn danger"><i
+                                                class="fas fa-sign-out-alt"></i> 退出登录</button>
+                                    </div>
+                                </div>
+                                <button id="netease-login-btn-top" class="btn-primary-small">登录</button>
+                                <button id="netease-download-floating" class="icon-btn" title="下载管理"><i
+                                        class="fas fa-tasks"></i></button>
+                            </div>
+                        </header>
+
+                        <!-- Download Panel (Overlay) -->
+                        <div class="netease-download-panel hidden" id="netease-download-panel">
+                            <div class="netease-download-header">
+                                <div>
+                                    <div class="netease-download-title">下载管理</div>
+                                </div>
+                                <button id="netease-download-toggle" class="icon-btn" title="关闭"><i
+                                        class="fas fa-times"></i></button>
+                            </div>
+                            <div class="netease-download-list" id="netease-download-list">
+                                <div class="loading-text">暂无下载</div>
+                            </div>
+                        </div>
+
+                        <div class="netease-search-hero">
+                            <div class="search-box">
+                                <i class="fas fa-search"></i>
+                                <input type="text" id="netease-global-input" placeholder="搜索歌曲或粘贴歌曲/歌单链接 (Enter搜索)">
+                            </div>
+                        </div>
+
+                        <div class="netease-results-area">
+
+
+                            <div class="netease-bulk-actions hidden" id="netease-bulk-actions">
+                                <label class="netease-check">
+                                    <input type="checkbox" id="netease-select-all">
+                                    <span>全选</span>
+                                </label>
+                                <button id="netease-bulk-download" class="btn-mini"><i class="fas fa-download"></i>
+                                    下载选中</button>
+                            </div>
+
+                            <div id="netease-result-list" class="netease-result-list">
+                                <!-- Empty State -->
+                                <div class="netease-empty-state">
+                                    <div class="empty-title">等待搜索...</div>
+                                    <div class="empty-desc">请输入关键词开始</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- QQ 音乐下载视图 -->
+                <div id="view-qqmusic" class="hidden">
+                    <div class="netease-gate glass-panel hidden" id="qqmusic-config-gate">
+                        <div class="gate-header-block">
+                            <div class="gate-title">配置 QQ 音乐 API</div>
+                            <div class="gate-desc">请输入 QQ 音乐 API 服务地址进行连接</div>
+                        </div>
+                        <div class="gate-options-container">
+                            <div class="gate-option-card">
+                                <div class="option-icon-box"><i class="fab fa-qq"></i></div>
+                                <div class="option-content">
+                                    <div class="option-title">连接 QQ 音乐 API</div>
+                                    <div class="option-desc">请先启动 QQMusicApi 服务，默认端口 8000<br>
+                                        项目地址: <a href="https://github.com/luren-dc/QQMusicApi" target="_blank">QQMusicApi</a>
+                                    </div>
+                                </div>
+                                <div class="gate-manual-form">
+                                    <input type="text" id="qqmusic-api-gate-input" placeholder="http://localhost:8000" value="http://localhost:8000">
+                                    <button id="qqmusic-api-gate-btn" class="btn-normal full-width-btn">检测并连接</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="netease-container-new" id="qqmusic-content">
+                        <header class="netease-header">
+                            <div class="netease-title-large">QQ 音乐下载</div>
+                            <div class="netease-header-right">
+                                <div id="qqmusic-user-display" class="netease-user-display hidden">
+                                    <div class="user-text">
+                                        <div id="qqmusic-user-name" class="user-name">User</div>
+                                        <div id="qqmusic-vip-badge" class="vip-badge hidden"><i class="fas fa-crown"></i> VIP</div>
+                                    </div>
+                                    <div class="vip-avatar-ring-wrapper">
+                                        <div class="" id="qqmusic-avatar-wrapper">
+                                            <img id="qqmusic-user-avatar" src="" alt="Avatar">
+                                        </div>
+                                    </div>
+                                    <i class="fas fa-chevron-down user-dropdown-caret"></i>
+                                    <div class="netease-user-menu hidden" id="qqmusic-user-menu">
+                                        <button id="qqmusic-menu-logout" class="menu-btn danger"><i class="fas fa-sign-out-alt"></i> 退出登录</button>
+                                    </div>
+                                </div>
+                                <button id="qqmusic-login-btn-top" class="btn-primary-small">登录</button>
+                                <button id="qqmusic-download-floating" class="icon-btn" title="下载管理"><i class="fas fa-tasks"></i></button>
+                            </div>
+                        </header>
+
+                        <div class="netease-download-panel hidden" id="qqmusic-download-panel">
+                            <div class="netease-download-header">
+                                <div>
+                                    <div class="netease-download-title">下载管理</div>
+                                </div>
+                                <button id="qqmusic-download-toggle" class="icon-btn" title="关闭"><i class="fas fa-times"></i></button>
+                            </div>
+                            <div class="netease-download-list" id="qqmusic-download-list">
+                                <div class="loading-text">暂无下载</div>
+                            </div>
+                        </div>
+
+                        <div class="netease-search-hero">
+                            <div class="search-box">
+                                <i class="fas fa-search"></i>
+                                <input type="text" id="qqmusic-global-input" placeholder="搜索 QQ 音乐歌曲 (Enter搜索)">
+                            </div>
+                        </div>
+
+                        <div class="netease-results-area">
+                            <div class="netease-bulk-actions hidden" id="qqmusic-bulk-actions">
+                                <label class="netease-check">
+                                    <input type="checkbox" id="qqmusic-select-all">
+                                    <span>全选</span>
+                                </label>
+                                <button id="qqmusic-bulk-download" class="btn-mini"><i class="fas fa-download"></i> 下载选中</button>
+                            </div>
+
+                            <div id="qqmusic-result-list" class="netease-result-list">
+                                <div class="netease-empty-state">
+                                    <div class="empty-title">等待搜索...</div>
+                                    <div class="empty-desc">请输入关键词开始</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="view-settings" class="hidden">
+                    <div class="settings-page">
+                        <h3><i class="fas fa-cog"></i> 系统设置</h3>
+
+                        <div class="settings-section glass-panel">
+                            <h4>登录与维护</h4>
+                            <div class="setting-row">
+                                <label>清理缓存</label>
+                                <button id="setting-clear-cache" class="btn-normal"
+                                    title="若遇到显示异常或加载问题，请尝试点击此按钮">清除应用缓存</button>
+                            </div>
+                            <div class="setting-row">
+                                <label>退出登录</label>
+                                <button id="setting-logout" class="btn-glass-danger">退出当前登录</button>
+                            </div>
+                        </div>
+
+                        <div class="settings-section glass-panel">
+                            <h4>外观设置</h4>
+                            <div class="setting-row">
+                                <label>全局缩放 (当前: <span id="setting-scale-value">自动</span>)</label>
+                                <div style="display: flex; align-items: center; gap: 0.8rem;">
+                                    <i class="fas fa-text-height" style="font-size: 0.8rem; opacity: 0.6;"></i>
+                                    <input type="range" id="setting-scale-input" min="0.6" max="1.4" step="0.05"
+                                        style="flex:1;">
+                                    <i class="fas fa-text-height" style="font-size: 1.2rem; opacity: 0.9;"></i>
+                                    <button id="setting-scale-reset" class="btn-mini"
+                                        style="margin-left: 0.5rem;">重置</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-section glass-panel">
+                            <h4>网易云音乐配置</h4>
+                            <div class="setting-row">
+                                <label>API 地址</label>
+                                <input type="text" id="netease-api-settings-input" placeholder="http://localhost:28998">
+                            </div>
+                            <div class="setting-row">
+                                <label>保存目录</label>
+                                <input type="text" id="netease-download-dir" placeholder="下载保存目录">
+                            </div>
+                            <div class="settings-actions" style="margin-top: 1.5rem;">
+                                <button id="netease-disconnect-btn" class="btn-danger">断开 API 连接</button>
+                                <button id="netease-save-settings-btn" class="btn-primary">保存网易云设置</button>
+                            </div>
+                        </div>
+
+                        <div class="settings-section glass-panel">
+                            <h4>QQ 音乐配置</h4>
+                            <div class="setting-row">
+                                <label>API 地址</label>
+                                <input type="text" id="qqmusic-api-settings-input" placeholder="http://localhost:8000">
+                            </div>
+                            <div class="setting-row">
+                                <label>保存目录</label>
+                                <input type="text" id="qqmusic-download-dir" placeholder="下载保存目录">
+                            </div>
+                            <div class="setting-row">
+                                <label>下载音质 (VIP)</label>
+                                <select id="qqmusic-quality-select" style="padding: 0.5rem; border-radius: 0.5rem; background: rgba(255,255,255,0.1); color: inherit; border: 1px solid rgba(255,255,255,0.2);">
+                                    <option value="FLAC">无损 FLAC</option>
+                                    <option value="MP3_320">高品质 MP3 320K</option>
+                                    <option value="MP3_128" selected>标准 MP3 128K</option>
+                                    <option value="OGG_192">OGG 192K</option>
+                                </select>
+                            </div>
+                            <div class="settings-actions" style="margin-top: 1.5rem;">
+                                <button id="qqmusic-disconnect-btn" class="btn-danger">断开 API 连接</button>
+                                <button id="qqmusic-save-settings-btn" class="btn-primary">保存 QQ 音乐设置</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="view-upload" class="hidden">
+                    <div class="upload-page glass-panel">
+                        <h3>上传音乐</h3>
+                        <p class="upload-desc">点击或拖拽文件到下方区域，可选择保存目录。</p>
+                        <div class="upload-target">
+                            <label for="upload-target-input">保存目录（仅可选择已添加的目录或默认库）</label>
+                            <div class="upload-select" id="upload-target-select">
+                                <div class="upload-select-current" id="upload-target-current" data-value="">默认音乐库
+                                </div>
+                                <div class="upload-select-list hidden" id="upload-target-list"></div>
+                            </div>
+                            <input type="hidden" id="upload-target-input" value="">
+                        </div>
+                        <div id="upload-dropzone" class="upload-dropzone">
+                            <i class="fas fa-cloud-upload-alt"></i>
+                            <div>拖拽文件到此，或点击选择</div>
+                            <input type="file" id="file-upload" accept=".mp3,.flac,.wav,.ogg,.m4a" hidden>
+                            <button id="upload-choose-btn" class="btn-primary">选择文件</button>
+                        </div>
+                        <div id="upload-status" class="upload-status"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer id="player-bar">
+            <div class="player-info" id="open-detail-view" title="点击查看歌词">
+                <img src="{{ url_for('static', filename='images/ICON_256.PNG') }}" id="current-cover" alt="Cover">
+                <div class="info-text">
+                    <div id="current-title">等待播放</div>
+                    <div id="current-artist">小松鼠</div>
+                </div>
+            </div>
+
+            <div class="player-controls">
+                <div class="buttons">
+                    <button class="icon-btn" id="btn-prev"><i class="fas fa-step-backward"></i></button>
+                    <button class="play-btn" id="btn-play"><i class="fas fa-play"></i></button>
+                    <button class="icon-btn" id="btn-next"><i class="fas fa-step-forward"></i></button>
+                </div>
+                <div class="progress-container">
+                    <span id="time-current">0:00</span>
+                    <input type="range" id="progress-bar" value="0" min="0" max="100" step="0.1">
+                    <span id="time-total">0:00</span>
+                </div>
+            </div>
+
+            <div class="player-extra">
+                <button class="icon-btn" id="btn-mute" style="width: 2rem; text-align: center;">
+                    <i class="fas fa-volume-up" id="vol-icon"></i>
+                </button>
+                <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="1">
+            </div>
+
+            <button id="mobile-mini-play" class="icon-btn" style="display: none; font-size: 1.5rem; padding: 1rem;">
+                <i class="fas fa-play"></i>
+            </button>
+        </footer>
+
+        <div id="full-player-overlay">
+            <div class="fp-header">
+                <button id="close-detail-view"><i class="fas fa-chevron-down"></i></button>
+                <span>正在播放</span>
+                <div class="fp-header-right">
+                    <button id="fp-menu-btn" class="icon-btn"><i class="fas fa-ellipsis-h"></i></button>
+                </div>
+            </div>
+
+            <div class="fp-content">
+                <div class="fp-art-area">
+                    <img src="{{ url_for('static', filename='images/ICON_256.PNG') }}" id="fp-cover" alt="Cover">
+                    <div class="fp-info">
+                        <h2 id="fp-title">歌曲标题</h2>
+                        <p id="fp-artist">歌手</p>
+                    </div>
+                </div>
+
+                <div class="fp-lyrics-area no-lyrics" id="lyrics-container">
+                    <p class="lyric-line active">暂无歌词</p>
+                </div>
+            </div>
+
+            <div class="fp-controls">
+                <div class="fp-progress-bar">
+                    <span id="fp-time-current">0:00</span>
+                    <input type="range" id="fp-progress-bar" value="0" min="0" max="100" step="0.1">
+                    <span id="fp-time-total">0:00</span>
+                </div>
+                <div class="fp-buttons">
+                    <button class="icon-btn" id="fp-btn-mode" title="切换模式"><i class="fas fa-redo"></i></button>
+                    <button class="icon-btn" id="fp-btn-prev"><i class="fas fa-step-backward"></i></button>
+                    <button class="play-btn play-huge" id="fp-btn-play"><i class="fas fa-play"></i></button>
+                    <button class="icon-btn" id="fp-btn-next"><i class="fas fa-step-forward"></i></button>
+                    <button class="icon-btn" id="fp-btn-fav" title="收藏"><i class="far fa-heart"></i></button>
+                </div>
+            </div>
+        </div>
+
+        <div id="upload-modal">
+            <div class="upload-box glass-panel">
+                <h3><i class="fas fa-cloud-upload-alt"></i> 上传文件</h3>
+                <p id="upload-filename">filename.mp3</p>
+                <div class="upload-progress-track">
+                    <div class="upload-progress-fill" id="upload-progress-fill"></div>
+                </div>
+                <div class="upload-status">
+                    <span id="upload-percent">0%</span>
+                    <span id="upload-msg">准备中...</span>
+                </div>
+                <button id="close-upload-modal" class="icon-btn" style="margin-top: 1rem; display: none;">关闭</button>
+            </div>
+        </div>
+
+        <div id="action-menu-overlay" class="custom-overlay">
+            <div class="action-sheet glass-panel">
+                <button class="action-item" id="action-rematch">
+                    <i class="fas fa-sync-alt"></i> 刷新数据
+                </button>
+                <button class="action-item" id="action-download">
+                    <i class="fas fa-download"></i> 本地下载
+                </button>
+                <button class="action-item delete" id="action-delete">
+                    <i class="fas fa-trash-alt"></i> 永久删除
+                </button>
+                <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 0.5rem 0;"></div>
+                <button class="action-item cancel" id="action-cancel">取消</button>
+            </div>
+        </div>
+
+        <div id="confirm-modal-overlay" class="custom-overlay">
+            <div class="confirm-box glass-panel">
+                <h3><i class="fas fa-exclamation-triangle"></i> 确认操作</h3>
+                <p>确定要执行此操作吗？</p>
+                <div class="confirm-buttons">
+                    <button id="confirm-yes" class="btn-danger">确认</button>
+                    <button id="confirm-no" class="btn-normal">取消</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="netease-qr-modal" class="custom-overlay centered">
+            <div class="qr-box glass-panel">
+                <h3>扫码登录网易云</h3>
+                <div class="netease-qr-box">
+                    <img id="netease-qr-img" alt="扫码登录" src="" />
+                    <div class="netease-qr-hint" id="netease-qr-hint">使用网易云音乐扫码</div>
+                </div>
+                <button id="close-qr-modal" class="btn-normal"
+                    style="margin-top: 1rem; padding: 0.6rem 1.5rem; border-radius: 2rem;">取消</button>
+            </div>
+        </div>
+
+        <div id="qqmusic-qr-modal" class="custom-overlay centered">
+            <div class="qr-box glass-panel" style="min-width: 320px;">
+                <h3>登录 QQ 音乐</h3>
+                <!-- 登录方式切换 -->
+                <div class="login-tabs">
+                    <button id="qqmusic-tab-qr" class="btn-normal active">扫码登录</button>
+                    <button id="qqmusic-tab-phone" class="btn-normal">手机登录</button>
+                    <button id="qqmusic-tab-cookie" class="btn-normal">Cookie登录</button>
+                </div>
+                <!-- 二维码登录 -->
+                <div id="qqmusic-qr-panel" class="netease-qr-box">
+                    <img id="qqmusic-qr-img" alt="扫码登录" src="" />
+                    <div class="netease-qr-hint" id="qqmusic-qr-hint">使用 QQ 或微信扫码</div>
+                </div>
+                <!-- 手机验证码登录 -->
+                <div id="qqmusic-phone-panel" style="display: none; padding: 1rem 0;">
+                    <div style="margin-bottom: 1rem;">
+                        <input type="tel" id="qqmusic-phone-input" placeholder="请输入手机号" 
+                            style="width: 100%; padding: 0.8rem; border-radius: 0.5rem; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: inherit; font-size: 1rem;">
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                        <input type="text" id="qqmusic-code-input" placeholder="验证码" maxlength="6"
+                            style="flex: 1; padding: 0.8rem; border-radius: 0.5rem; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: inherit; font-size: 1rem;">
+                        <button id="qqmusic-send-code-btn" class="btn-primary" style="padding: 0.8rem 1rem; white-space: nowrap;">发送验证码</button>
+                    </div>
+                    <div id="qqmusic-phone-hint" style="font-size: 0.85rem; color: rgba(255,255,255,0.6); margin-bottom: 1rem; text-align: center;"></div>
+                    <button id="qqmusic-phone-login-btn" class="btn-primary" style="width: 100%; padding: 0.8rem; border-radius: 0.5rem;">登录</button>
+                </div>
+                <!-- Cookie 登录 -->
+                <div id="qqmusic-cookie-panel" style="display: none; padding: 1rem 0;">
+                    <div style="font-size: 0.85rem; color: rgba(255,255,255,0.7); margin-bottom: 1rem; line-height: 1.5;">
+                        从浏览器获取 Cookie：<br>
+                        1. 登录 <a href="https://y.qq.com" target="_blank" style="color: #4fc3f7;">y.qq.com</a><br>
+                        2. F12 → Application → Cookies → y.qq.com<br>
+                        3. 找到 <b>uin</b> (去掉开头的o) 和 <b>qm_keyst</b>
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <input type="text" id="qqmusic-cookie-musicid" placeholder="uin 的值 (如 o1234567890 填 1234567890)" 
+                            style="width: 100%; padding: 0.8rem; border-radius: 0.5rem; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: inherit; font-size: 1rem;">
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <input type="text" id="qqmusic-cookie-musickey" placeholder="qm_keyst 的值" 
+                            style="width: 100%; padding: 0.8rem; border-radius: 0.5rem; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: inherit; font-size: 1rem;">
+                    </div>
+                    <div id="qqmusic-cookie-hint" style="font-size: 0.85rem; color: rgba(255,255,255,0.6); margin-bottom: 1rem; text-align: center;"></div>
+                    <button id="qqmusic-cookie-login-btn" class="btn-primary" style="width: 100%; padding: 0.8rem; border-radius: 0.5rem;">登录</button>
+                </div>
+                <button id="close-qqmusic-qr-modal" class="btn-normal"
+                    style="margin-top: 1rem; padding: 0.6rem 1.5rem; border-radius: 2rem;">取消</button>
+            </div>
+        </div>
+
+        <!-- 添加到歌单弹窗 -->
+        <div id="add-to-playlist-modal" class="custom-overlay centered">
+            <div class="qr-box glass-panel" style="min-width: 300px; max-width: 400px;">
+                <h3 style="margin-bottom: 1rem;"><i class="fas fa-plus"></i> 添加到歌单</h3>
+                <div id="add-to-playlist-list" style="max-height: 300px; overflow-y: auto; margin-bottom: 1rem;">
+                    <div class="loading-text" style="padding: 2rem 0; opacity: 0.6;">加载中...</div>
+                </div>
+                <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1rem;">
+                    <button id="btn-create-playlist-in-modal" class="btn-secondary" style="width: 100%; padding: 0.6rem; margin-bottom: 0.5rem;">
+                        <i class="fas fa-folder-plus"></i> 新建歌单
+                    </button>
+                    <button id="close-add-to-playlist-modal" class="btn-normal" style="width: 100%; padding: 0.6rem;">取消</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 新建歌单弹窗 -->
+        <div id="create-playlist-modal" class="custom-overlay centered">
+            <div class="qr-box glass-panel" style="min-width: 300px;">
+                <h3 style="margin-bottom: 1rem;"><i class="fas fa-folder-plus"></i> 新建歌单</h3>
+                <input type="text" id="new-playlist-name-input" placeholder="输入歌单名称..." 
+                    style="width: 100%; padding: 0.8rem; border-radius: 0.5rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: var(--text-main); margin-bottom: 1rem;">
+                <div style="display: flex; gap: 0.5rem;">
+                    <button id="close-create-playlist-modal" class="btn-normal" style="flex: 1; padding: 0.6rem;">取消</button>
+                    <button id="confirm-create-playlist" class="btn-primary" style="flex: 1; padding: 0.6rem;">创建</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 通用确认模态框 -->
+        <div class="overlay" id="confirm-modal-overlay">
+            <div class="modal confirm-box">
+                <h3>提示</h3>
+                <p>确认执行此操作吗？</p>
+                <div class="modal-buttons">
+                    <button id="confirm-no" class="btn-normal">取消</button>
+                    <button id="confirm-yes" class="btn-primary">确定</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="toast-container"></div>
+        <input type="file" id="file-upload" accept=".mp3,.flac,.wav,.ogg,.m4a" style="display: none;">
+
+    </div>
+
+    <audio id="audio-player"></audio>
+    <script>
+        (function () {
+            try {
+                const saved = localStorage.getItem('xiaosongshu_state');
+                const state = saved ? JSON.parse(saved) : {};
+                const tab = state.tab || 'local';
+
+                // 1. Restore FullScreen Overlay
+                if (state.isFullScreen) {
+                    const overlay = document.getElementById('full-player-overlay');
+                    if (overlay) overlay.classList.add('active');
+                }
+
+                // 2. Tab & View
+                document.querySelectorAll('nav li').forEach(el => el.classList.remove('active'));
+                const targetNav = document.getElementById('nav-' + tab);
+                if (targetNav) targetNav.classList.add('active');
+
+                const vp = document.getElementById('view-player');
+                const vm = document.getElementById('view-mount');
+                const vn = document.getElementById('view-netease');
+                const vpl = document.getElementById('view-playlists');
+                if (vp) vp.classList.add('hidden');
+                if (vm) vm.classList.add('hidden');
+                if (vn) vn.classList.add('hidden');
+                if (vpl) vpl.classList.add('hidden');
+
+                if (tab === 'mount') { if (vm) vm.classList.remove('hidden'); }
+                else if (tab === 'netease') { if (vn) vn.classList.remove('hidden'); }
+                else if (tab === 'playlists') { if (vpl) vpl.classList.remove('hidden'); }
+                else { if (vp) vp.classList.remove('hidden'); }
+
+                // 3. Search Box logic
+                const searchBox = document.querySelector('.search-box');
+                if (searchBox) {
+                    if (tab === 'local') {
+                        searchBox.style.display = 'flex';
+                        searchBox.style.opacity = '1';
+                    } else {
+                        searchBox.style.display = 'none';
+                        searchBox.style.opacity = '0';
+                    }
+                }
+
+                // 4. Volume
+                if (state.volume !== undefined) {
+                    const volSlider = document.getElementById('volume-slider');
+                    if (volSlider) {
+                        volSlider.value = state.volume;
+                        volSlider.style.backgroundSize = (state.volume * 100) + '% 100%';
+                    }
+                }
+
+                // 5. Pre-render Song List (Minimize Flicker)
+                if (tab === 'local' || tab === 'fav') {
+                    const container = document.getElementById('song-list-container');
+                    const playlist = JSON.parse(localStorage.getItem('xiaosongshu_playlist') || '[]');
+                    const favs = new Set(JSON.parse(localStorage.getItem('xiaosongshu_favs') || '[]'));
+
+                    if (container && playlist.length > 0) {
+                        let displayList = playlist;
+
+                        // If Tab is Favorite, filter it
+                        if (tab === 'fav') {
+                            displayList = playlist.filter(s => favs.has(s.id));
+                            const titleEl = document.getElementById('list-title');
+                            if (titleEl) titleEl.innerText = '收藏列表';
+                        } else {
+                            const titleEl = document.getElementById('list-title');
+                            if (titleEl) titleEl.innerText = '歌曲列表';
+                        }
+
+                        if (displayList.length > 0) {
+                            let html = '';
+                            displayList.forEach((song, index) => {
+                                const isFav = favs.has(song.id);
+                                const isExt = song.isExternal;
+                                let favHtml = `<button class="card-fav-btn ${isFav ? 'active' : ''}">${isFav ? '<i class="fas fa-heart"></i>' : '<i class="far fa-heart"></i>'}</button>`;
+                                if (isExt) favHtml = '';
+                                const borderStyle = isExt ? 'border:1px dashed var(--primary);' : '';
+
+                                html += `<div class="song-card" data-index="${index}" style="${borderStyle}">
+                                    ${favHtml}
+                                    <img src="${song.cover || '/static/images/ICON_256.PNG'}" loading="lazy">
+                                    <div class="card-info">
+                                        <div class="title">${song.title || song.filename}</div>
+                                        <div class="artist">${song.artist || '未知艺术家'}</div>
+                                    </div>
+                                </div>`;
+                            });
+                            container.innerHTML = html;
+                        } else if (tab === 'fav') {
+                            container.innerHTML = `<div class="loading-text" style="grid-column: 1/-1; padding: 4rem 0; font-size: 1.1rem; opacity: 0.6;">暂无收藏歌曲</div>`;
+                        } else {
+                            container.innerHTML = `<div class="loading-text" style="grid-column: 1/-1; padding: 4rem 0; font-size: 1.1rem; opacity: 0.6;">暂无歌曲</div>`;
+                        }
+                    }
+                }
+
+                // 6. Current Song Info
+                if (state.currentFilename) {
+                    const playlist = JSON.parse(localStorage.getItem('xiaosongshu_playlist') || '[]');
+                    const song = playlist.find(s => s.filename === state.currentFilename);
+                    if (song) {
+                        const title = song.title || song.filename;
+                        const artist = song.artist || '未知艺术家';
+                        const cover = song.album_art || song.cover || "{{ url_for('static', filename='images/ICON_256.PNG') }}";
+
+                        ['current-title', 'fp-title'].forEach(id => {
+                            const el = document.getElementById(id);
+                            if (el) el.innerText = title;
+                        });
+                        ['current-artist', 'fp-artist'].forEach(id => {
+                            const el = document.getElementById(id);
+                            if (el) el.innerText = artist;
+                        });
+                        ['current-cover', 'fp-cover'].forEach(id => {
+                            const el = document.getElementById(id);
+                            if (el) el.src = cover;
+                        });
+                    }
+                }
+
+            } catch (e) { console.error('Fast init error', e); }
+        })();
+    </script>
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+
+</html>

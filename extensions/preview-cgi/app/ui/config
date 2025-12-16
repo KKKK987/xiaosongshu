@@ -1,0 +1,24 @@
+{
+    ".url": {
+        "xiaosongshu-preview.play": {
+            "title": "播放音乐 (xiaosongshu CGI)",
+            "icon": "images/icon_{0}.png",
+            "type": "iframe",
+            "url": "/cgi/ThirdParty/xiaosongshu-preview/index.cgi",
+            "allUsers": false,
+            "fileTypes": [
+                "mp3",
+                "flac",
+                "wav",
+                "ogg",
+                "m4a",
+                "ape"
+            ],
+            "control": {
+                "fullUrlPerm": "readonly",
+                "pathPerm": "readonly"
+            },
+            "noDisplay": true
+        }
+    }
+}
