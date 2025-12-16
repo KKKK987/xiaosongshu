@@ -19,6 +19,7 @@ import concurrent.futures
 import traceback
 from urllib.parse import quote, unquote, urlparse, parse_qs
 import hashlib
+import json
 from datetime import timedelta
 
 # 全局异常捕获，写入日志文件
@@ -296,8 +297,78 @@ app.permanent_session_lifetime = timedelta(days=30)
 def favicon():
     return send_file(os.path.join(STATIC_DIR, 'images', 'ICON_256.PNG'), mimetype='image/png')
 
-APP_AUTH_USER = os.environ.get('APP_AUTH_USER', 'admin')
-APP_AUTH_PASSWORD = args.password
+APP_AUTH_PASSWORD = args.password  # 管理员密码
+
+# --- 多用户系统 ---
+USER_DATA_DIR = os.path.join(MUSIC_LIBRARY_PATH, 'user_data')
+os.makedirs(USER_DATA_DIR, exist_ok=True)
+
+def validate_password(password: str) -> tuple:
+    """验证密码格式：6位以上，必须包含数字和字母"""
+    if len(password) < 6:
+        return False, '密码必须至少6位'
+    has_letter = any(c.isalpha() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    if not has_letter or not has_digit:
+        return False, '密码必须包含数字和字母'
+    return True, ''
+
+def get_user_file_path(password_hash: str) -> str:
+    """获取用户数据文件路径"""
+    return os.path.join(USER_DATA_DIR, f"{password_hash[:16]}.json")
+
+def load_user_data(password_hash: str) -> dict:
+    """加载用户数据"""
+    file_path = get_user_file_path(password_hash)
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+def save_user_data(password_hash: str, data: dict):
+    """保存用户数据"""
+    file_path = get_user_file_path(password_hash)
+    try:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        logger.error(f"保存用户数据失败: {e}")
+        return False
+
+def create_user(password_hash: str, is_admin: bool = False) -> dict:
+    """创建新用户"""
+    user_data = {
+        'password_hash': password_hash,
+        'is_admin': is_admin,
+        'favorites': [],
+        'playlists': [],
+        'created_at': time.time()
+    }
+    save_user_data(password_hash, user_data)
+    return user_data
+
+def get_current_user() -> dict:
+    """获取当前登录用户的数据"""
+    password_hash = session.get('user_hash')
+    if not password_hash:
+        return None
+    return load_user_data(password_hash)
+
+def init_admin_user():
+    """初始化管理员用户"""
+    if not APP_AUTH_PASSWORD:
+        return
+    admin_hash = hashlib.sha256(APP_AUTH_PASSWORD.encode()).hexdigest()
+    if not load_user_data(admin_hash):
+        create_user(admin_hash, is_admin=True)
+        logger.info("管理员用户已创建")
+
+# 启动时初始化管理员
+init_admin_user()
 
 def _auth_failed():
     if request.path.startswith('/api/'):
@@ -306,12 +377,11 @@ def _auth_failed():
 
 @app.before_request
 def require_auth():
-    if not APP_AUTH_PASSWORD:
-        return
     path = request.path or ''
-    if path.startswith('/static') or path.startswith('/login') or path == '/favicon.ico':
+    # 静态资源和登录/注册页面不需要认证
+    if path.startswith('/static') or path.startswith('/login') or path.startswith('/register') or path == '/favicon.ico':
         return
-    if session.get('authed'):
+    if session.get('authed') and session.get('user_hash'):
         return
     return _auth_failed()
 
@@ -324,35 +394,77 @@ def add_cors_headers(response):
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    if not APP_AUTH_PASSWORD:
-        return redirect(url_for('index'))
     error = None
     next_path = request.args.get('next') or '/'
     if request.method == 'POST':
         pwd = request.form.get('password') or ''
+        mode = request.form.get('mode', 'login')  # login 或 register
+        raw_pwd = request.form.get('raw_password') or pwd
         
-        # 对用户输入的密码做 SHA256 哈希，与存储的密码哈希比较
-        input_hash = hashlib.sha256(pwd.encode()).hexdigest()
-        stored_hash = hashlib.sha256(APP_AUTH_PASSWORD.encode()).hexdigest()
-        
-        if input_hash.lower() == stored_hash.lower():
-            session['authed'] = True
-            if request.form.get('remember'):
-                session.permanent = True
-            else:
-                session.permanent = False
-            return redirect(next_path)
+        # 前端已经做了 SHA256，这里直接使用
+        if len(pwd) != 64:
+            password_hash = hashlib.sha256(pwd.encode()).hexdigest()
         else:
-            error = '密码错误'
+            password_hash = pwd.lower()
+        
+        if mode == 'register':
+            # 注册模式
+            valid, msg = validate_password(raw_pwd)
+            if not valid:
+                error = msg
+            elif load_user_data(password_hash):
+                error = '该密码已被注册'
+            else:
+                create_user(password_hash, is_admin=False)
+                # 注册成功后自动登录
+                session['authed'] = True
+                session['user_hash'] = password_hash
+                session['is_admin'] = False
+                if request.form.get('remember'):
+                    session.permanent = True
+                return redirect(next_path)
+        else:
+            # 登录模式
+            user_data = load_user_data(password_hash)
+            if user_data:
+                session['authed'] = True
+                session['user_hash'] = password_hash
+                session['is_admin'] = user_data.get('is_admin', False)
+                if request.form.get('remember'):
+                    session.permanent = True
+                else:
+                    session.permanent = False
+                return redirect(next_path)
+            else:
+                error = '密码不存在，请先注册'
     return render_template('login.html', error=error, next_path=next_path)
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    # 注册功能已整合到登录页面，重定向到登录页
+    return redirect(url_for('login'))
 
 @app.route('/logout')
 def logout():
     session.pop('authed', None)
+    session.pop('user_hash', None)
+    session.pop('is_admin', None)
     session.clear()
     resp = make_response(redirect(url_for('login')))
     resp.delete_cookie(app.config.get('SESSION_COOKIE_NAME', 'session'))
     return resp
+
+@app.route('/api/user/info')
+def get_user_info():
+    """获取当前用户信息"""
+    user = get_current_user()
+    if not user:
+        return jsonify({'success': False, 'error': 'not logged in'})
+    return jsonify({
+        'success': True,
+        'is_admin': user.get('is_admin', False),
+        'created_at': user.get('created_at')
+    })
 
 # --- 数据库管理 ---
 def get_db():
@@ -403,16 +515,22 @@ def init_db():
                 )
             ''')
             
-            # 本地歌单表
+            # 本地歌单表 (添加 user_hash 字段支持多用户)
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS playlists (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
                     cover TEXT,
                     created_at REAL,
-                    updated_at REAL
+                    updated_at REAL,
+                    user_hash TEXT DEFAULT ''
                 )
             ''')
+            
+            # 迁移：为旧表添加 user_hash 字段
+            try:
+                conn.execute("ALTER TABLE playlists ADD COLUMN user_hash TEXT DEFAULT ''")
+            except: pass
             
             # 歌单歌曲关联表
             conn.execute('''
@@ -992,7 +1110,8 @@ threading.Thread(target=init_watchdog, daemon=True).start()
 # --- 路由定义 ---
 @app.route('/')
 def index():
-    return render_template('index.html')
+    is_admin = session.get('is_admin', False)
+    return render_template('index.html', is_admin=is_admin)
 
 # --- 系统状态接口 ---
 @app.route('/api/system/status')
@@ -1943,22 +2062,36 @@ def import_music_by_path():
         return jsonify({'success': True, 'id': song_id, 'filename': filename})
     except Exception as e: return jsonify({'success': False, 'error': str(e)})
 
-# --- 收藏夹接口 ---
+# --- 收藏夹接口 (用户隔离) ---
 @app.route('/api/favorites', methods=['GET'])
 def get_favorites():
     try:
-        with get_db() as conn:
-            rows = conn.execute("SELECT song_id FROM favorites").fetchall()
-            return jsonify({'success': True, 'data': [r['song_id'] for r in rows]})
+        user_hash = session.get('user_hash')
+        if not user_hash:
+            return jsonify({'success': False, 'error': 'not logged in'})
+        user_data = load_user_data(user_hash)
+        if not user_data:
+            return jsonify({'success': True, 'data': []})
+        return jsonify({'success': True, 'data': user_data.get('favorites', [])})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/favorites/<song_id>', methods=['POST'])
 def add_favorite(song_id):
     try:
-        with get_db() as conn:
-            conn.execute("INSERT OR IGNORE INTO favorites (song_id, created_at) VALUES (?, ?)", (song_id, time.time()))
-            conn.commit()
+        user_hash = session.get('user_hash')
+        if not user_hash:
+            return jsonify({'success': False, 'error': 'not logged in'})
+        user_data = load_user_data(user_hash)
+        if not user_data:
+            return jsonify({'success': False, 'error': 'user not found'})
+        
+        favorites = user_data.get('favorites', [])
+        if song_id not in favorites:
+            favorites.append(song_id)
+            user_data['favorites'] = favorites
+            save_user_data(user_hash, user_data)
+        
         logger.info(f"收藏成功: {song_id}")
         return jsonify({'success': True})
     except Exception as e:
@@ -1968,9 +2101,19 @@ def add_favorite(song_id):
 @app.route('/api/favorites/<song_id>', methods=['DELETE'])
 def remove_favorite(song_id):
     try:
-        with get_db() as conn:
-            conn.execute("DELETE FROM favorites WHERE song_id=?", (song_id,))
-            conn.commit()
+        user_hash = session.get('user_hash')
+        if not user_hash:
+            return jsonify({'success': False, 'error': 'not logged in'})
+        user_data = load_user_data(user_hash)
+        if not user_data:
+            return jsonify({'success': False, 'error': 'user not found'})
+        
+        favorites = user_data.get('favorites', [])
+        if song_id in favorites:
+            favorites.remove(song_id)
+            user_data['favorites'] = favorites
+            save_user_data(user_hash, user_data)
+        
         logger.info(f"取消收藏成功: {song_id}")
         return jsonify({'success': True})
     except Exception as e:
@@ -4909,20 +5052,34 @@ def get_playlist_detail(playlist_id):
         return jsonify({'success': False, 'error': f'获取失败: {str(e)}'})
 
 
-# ==================== 本地歌单管理 API ====================
+# ==================== 本地歌单管理 API (用户隔离) ====================
 
 @app.route('/api/playlists')
 def get_local_playlists():
-    """获取本地歌单列表"""
+    """获取本地歌单列表（按用户隔离）"""
     try:
+        user_hash = session.get('user_hash', '')
+        is_admin = session.get('is_admin', False)
         with get_db() as conn:
-            rows = conn.execute('''
-                SELECT p.id, p.name, p.cover, p.created_at, p.updated_at,
-                       (SELECT COUNT(*) FROM playlist_songs WHERE playlist_id = p.id) as song_count,
-                       (SELECT COUNT(*) FROM playlist_pending_songs WHERE playlist_id = p.id) as pending_count
-                FROM playlists p
-                ORDER BY p.updated_at DESC
-            ''').fetchall()
+            # 管理员可以看到自己的歌单和旧数据（user_hash为空），普通用户只能看到自己的
+            if is_admin:
+                rows = conn.execute('''
+                    SELECT p.id, p.name, p.cover, p.created_at, p.updated_at,
+                           (SELECT COUNT(*) FROM playlist_songs WHERE playlist_id = p.id) as song_count,
+                           (SELECT COUNT(*) FROM playlist_pending_songs WHERE playlist_id = p.id) as pending_count
+                    FROM playlists p
+                    WHERE p.user_hash = ? OR p.user_hash = '' OR p.user_hash IS NULL
+                    ORDER BY p.updated_at DESC
+                ''', (user_hash,)).fetchall()
+            else:
+                rows = conn.execute('''
+                    SELECT p.id, p.name, p.cover, p.created_at, p.updated_at,
+                           (SELECT COUNT(*) FROM playlist_songs WHERE playlist_id = p.id) as song_count,
+                           (SELECT COUNT(*) FROM playlist_pending_songs WHERE playlist_id = p.id) as pending_count
+                    FROM playlists p
+                    WHERE p.user_hash = ?
+                    ORDER BY p.updated_at DESC
+                ''', (user_hash,)).fetchall()
             
             playlists = []
             for row in rows:
@@ -4957,10 +5114,11 @@ def create_local_playlist():
             return jsonify({'success': False, 'error': '歌单名称不能为空'})
         
         now = time.time()
+        user_hash = session.get('user_hash', '')
         with get_db() as conn:
             cursor = conn.execute(
-                'INSERT INTO playlists (name, created_at, updated_at) VALUES (?, ?, ?)',
-                (name, now, now)
+                'INSERT INTO playlists (name, created_at, updated_at, user_hash) VALUES (?, ?, ?, ?)',
+                (name, now, now, user_hash)
             )
             playlist_id = cursor.lastrowid
             
@@ -5016,7 +5174,18 @@ def create_local_playlist():
 def delete_local_playlist(playlist_id):
     """删除本地歌单"""
     try:
+        user_hash = session.get('user_hash', '')
+        is_admin = session.get('is_admin', False)
         with get_db() as conn:
+            # 验证歌单所有权
+            playlist = conn.execute('SELECT user_hash FROM playlists WHERE id = ?', (playlist_id,)).fetchone()
+            if not playlist:
+                return jsonify({'success': False, 'error': '歌单不存在'})
+            playlist_owner = playlist['user_hash'] or ''
+            # 只有歌单所有者或管理员（对于旧数据）可以删除
+            if playlist_owner != user_hash and not (is_admin and playlist_owner == ''):
+                return jsonify({'success': False, 'error': '无权删除此歌单'})
+            
             conn.execute('DELETE FROM playlist_songs WHERE playlist_id = ?', (playlist_id,))
             conn.execute('DELETE FROM playlist_pending_songs WHERE playlist_id = ?', (playlist_id,))
             conn.execute('DELETE FROM playlists WHERE id = ?', (playlist_id,))
@@ -5037,7 +5206,17 @@ def rename_local_playlist(playlist_id):
         if not name:
             return jsonify({'success': False, 'error': '歌单名称不能为空'})
         
+        user_hash = session.get('user_hash', '')
+        is_admin = session.get('is_admin', False)
         with get_db() as conn:
+            # 验证歌单所有权
+            playlist = conn.execute('SELECT user_hash FROM playlists WHERE id = ?', (playlist_id,)).fetchone()
+            if not playlist:
+                return jsonify({'success': False, 'error': '歌单不存在'})
+            playlist_owner = playlist['user_hash'] or ''
+            if playlist_owner != user_hash and not (is_admin and playlist_owner == ''):
+                return jsonify({'success': False, 'error': '无权修改此歌单'})
+            
             conn.execute(
                 'UPDATE playlists SET name = ?, updated_at = ? WHERE id = ?',
                 (name, time.time(), playlist_id)
@@ -5140,12 +5319,17 @@ def add_song_to_playlist(playlist_id):
         if not song_id:
             return jsonify({'success': False, 'error': '缺少歌曲ID'})
         
+        user_hash = session.get('user_hash', '')
+        is_admin = session.get('is_admin', False)
         now = time.time()
         with get_db() as conn:
-            # 检查歌单是否存在
-            playlist = conn.execute('SELECT id FROM playlists WHERE id = ?', (playlist_id,)).fetchone()
+            # 检查歌单是否存在并验证权限
+            playlist = conn.execute('SELECT id, user_hash FROM playlists WHERE id = ?', (playlist_id,)).fetchone()
             if not playlist:
                 return jsonify({'success': False, 'error': '歌单不存在'})
+            playlist_owner = playlist['user_hash'] or ''
+            if playlist_owner != user_hash and not (is_admin and playlist_owner == ''):
+                return jsonify({'success': False, 'error': '无权修改此歌单'})
             
             # 检查歌曲是否存在
             song = conn.execute('SELECT id FROM songs WHERE id = ?', (song_id,)).fetchone()
@@ -5179,7 +5363,17 @@ def add_song_to_playlist(playlist_id):
 def remove_song_from_playlist(playlist_id, song_id):
     """从歌单移除歌曲"""
     try:
+        user_hash = session.get('user_hash', '')
+        is_admin = session.get('is_admin', False)
         with get_db() as conn:
+            # 验证歌单所有权
+            playlist = conn.execute('SELECT user_hash FROM playlists WHERE id = ?', (playlist_id,)).fetchone()
+            if not playlist:
+                return jsonify({'success': False, 'error': '歌单不存在'})
+            playlist_owner = playlist['user_hash'] or ''
+            if playlist_owner != user_hash and not (is_admin and playlist_owner == ''):
+                return jsonify({'success': False, 'error': '无权修改此歌单'})
+            
             conn.execute(
                 'DELETE FROM playlist_songs WHERE playlist_id = ? AND song_id = ?',
                 (playlist_id, song_id)
@@ -5196,7 +5390,17 @@ def remove_song_from_playlist(playlist_id, song_id):
 def remove_pending_song_from_playlist(playlist_id, pending_id):
     """从歌单移除待下载歌曲"""
     try:
+        user_hash = session.get('user_hash', '')
+        is_admin = session.get('is_admin', False)
         with get_db() as conn:
+            # 验证歌单所有权
+            playlist = conn.execute('SELECT user_hash FROM playlists WHERE id = ?', (playlist_id,)).fetchone()
+            if not playlist:
+                return jsonify({'success': False, 'error': '歌单不存在'})
+            playlist_owner = playlist['user_hash'] or ''
+            if playlist_owner != user_hash and not (is_admin and playlist_owner == ''):
+                return jsonify({'success': False, 'error': '无权修改此歌单'})
+            
             conn.execute(
                 'DELETE FROM playlist_pending_songs WHERE playlist_id = ? AND id = ?',
                 (playlist_id, pending_id)

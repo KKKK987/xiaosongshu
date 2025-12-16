@@ -227,7 +227,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     });
 
-    // Logout
+    // Logout (Settings page)
     document.getElementById('setting-logout')?.addEventListener('click', () => {
       showConfirmDialog('退出登录', '确定要退出当前登录吗？', () => {
         window.location.href = '/logout';
@@ -235,6 +235,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
   initSettings();
+
+  // Logout (Sidebar)
+  document.getElementById('nav-logout')?.addEventListener('click', () => {
+    showConfirmDialog('退出登录', '确定要退出当前登录吗？', () => {
+      window.location.href = '/logout';
+    });
+  });
 
   // 初始化模块
   initMounts(loadSongs);

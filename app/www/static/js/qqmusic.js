@@ -441,16 +441,37 @@ function toggleQQBulkActions(visible) {
 function renderQQMusicResults() {
   const list = ui.qqmusicResultList;
   if (!list) return;
+  const isRecommend = state.qqmusicResultSource === 'recommend';
   if (!state.qqmusicResults.length) {
-    list.innerHTML = `<div class="netease-empty-state">
-      <div class="empty-title">等待搜索...</div>
-      <div class="empty-desc">请输入关键词开始</div>
-    </div>`;
+    list.innerHTML = isRecommend
+      ? `<div class="netease-empty-state">
+          <div class="empty-title">暂无推荐</div>
+          <div class="empty-desc">请检查 QQ 音乐 API 连接</div>
+        </div>`
+      : `<div class="netease-empty-state">
+          <div class="empty-title">等待搜索...</div>
+          <div class="empty-desc">请输入关键词开始</div>
+        </div>`;
     toggleQQBulkActions(false);
     return;
   }
   list.innerHTML = '';
   const frag = document.createDocumentFragment();
+
+  // 推荐列表标题
+  if (isRecommend) {
+    const head = document.createElement('div');
+    head.className = 'netease-recommend-head';
+    head.innerHTML = `
+      <div class="netease-recommend-text">
+        <div class="recommend-title">热门推荐</div>
+      </div>
+      <button class="btn-mini"><i class="fas fa-sync-alt"></i> 刷新</button>
+    `;
+    const btn = head.querySelector('button');
+    btn?.addEventListener('click', () => loadQQMusicRecommendations(true));
+    frag.appendChild(head);
+  }
 
   if (ui.qqmusicBulkActions) {
     frag.appendChild(ui.qqmusicBulkActions);
@@ -676,6 +697,80 @@ async function startQQDownload({ taskId, song, btnEl, fileType }) {
   }
 }
 
+// 加载 QQ 音乐推荐歌曲
+let qqRecommendLoading = false;
+async function loadQQMusicRecommendations(forceReload = false) {
+  if (qqRecommendLoading) return;
+  
+  // 如果已有缓存且不强制刷新，直接使用缓存
+  if (!forceReload && state.qqmusicRecommendations.length) {
+    state.qqmusicResults = state.qqmusicRecommendations;
+    state.qqmusicResultSource = 'recommend';
+    state.qqmusicSelected = new Set();
+    renderQQMusicResults();
+    return;
+  }
+
+  qqRecommendLoading = true;
+  if (ui.qqmusicResultList && (state.qqmusicResultSource === 'recommend' || !state.qqmusicResults.length)) {
+    ui.qqmusicResultList.innerHTML = `
+      <div class="netease-empty-state" style="opacity:0.8; padding: 2rem;">
+        <div class="loading-spinner" style="width:2rem;height:2rem;margin-bottom:1rem;"></div>
+        <div class="loading-text">正在加载推荐...</div>
+      </div>`;
+  }
+
+  try {
+    // 获取热搜词
+    const hotkeyRes = await api.qqmusic.hotkey();
+    if (hotkeyRes.success && hotkeyRes.data && hotkeyRes.data.length > 0) {
+      // 使用第一个热搜词搜索歌曲
+      const firstHotkey = hotkeyRes.data[0].k || hotkeyRes.data[0].title || hotkeyRes.data[0];
+      const searchRes = await api.qqmusic.search(firstHotkey, 30);
+      
+      if (searchRes.success) {
+        state.qqmusicRecommendations = searchRes.songs || searchRes.data || [];
+        state.qqmusicResults = state.qqmusicRecommendations;
+        state.qqmusicResultSource = 'recommend';
+        state.qqmusicSelected = new Set();
+        renderQQMusicResults();
+      } else {
+        throw new Error(searchRes.error || '搜索失败');
+      }
+    } else {
+      // 如果获取热搜失败，使用默认关键词
+      const searchRes = await api.qqmusic.search('热门歌曲', 30);
+      if (searchRes.success) {
+        state.qqmusicRecommendations = searchRes.songs || searchRes.data || [];
+        state.qqmusicResults = state.qqmusicRecommendations;
+        state.qqmusicResultSource = 'recommend';
+        state.qqmusicSelected = new Set();
+        renderQQMusicResults();
+      } else {
+        if (ui.qqmusicResultList) {
+          ui.qqmusicResultList.innerHTML = `
+            <div class="netease-empty-state">
+              <div class="empty-title">加载推荐失败</div>
+              <div class="empty-desc">请检查 QQ 音乐 API 连接</div>
+            </div>`;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('load QQ recommend failed', err);
+    if (ui.qqmusicResultList && (state.qqmusicResultSource === 'recommend' || !state.qqmusicResults.length)) {
+      ui.qqmusicResultList.innerHTML = `
+        <div class="netease-empty-state">
+          <div class="empty-title">加载推荐失败</div>
+          <div class="empty-desc">请检查 QQ 音乐 API 连接</div>
+        </div>`;
+    }
+    toggleQQBulkActions(false);
+  } finally {
+    qqRecommendLoading = false;
+  }
+}
+
 async function downloadQQSong(song, btnEl) {
   if (!song || !song.mid) return;
   // VIP 歌曲需要登录才能下载
@@ -735,6 +830,7 @@ async function searchQQMusic() {
     
     if (json.success) {
       state.qqmusicResults = json.songs || json.data || [];
+      state.qqmusicResultSource = 'search';
       state.qqmusicSelected = new Set();
       renderQQMusicResults();
       
@@ -1299,6 +1395,9 @@ export function initQQMusic(refreshCallback) {
 
   // 加载配置
   loadQQMusicConfig();
+  
+  // 加载推荐歌曲
+  loadQQMusicRecommendations();
 }
 
-export { searchQQMusic, renderQQMusicResults, downloadQQSong };
+export { searchQQMusic, renderQQMusicResults, downloadQQSong, loadQQMusicRecommendations };

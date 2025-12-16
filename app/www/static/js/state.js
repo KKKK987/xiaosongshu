@@ -35,6 +35,8 @@ export const state = {
   libraryVersion: 0,
   // QQ 音乐状态
   qqmusicResults: [],
+  qqmusicRecommendations: [],
+  qqmusicResultSource: 'recommend',  // 'recommend' 或 'search'
   qqmusicSelected: new Set(),
   qqmusicDownloadTasks: [],
   qqmusicPendingQueue: [],

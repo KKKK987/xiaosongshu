@@ -62,15 +62,16 @@
                     <li class="active" id="nav-local"><i class="fas fa-music"></i> <span>本地音乐</span></li>
                     <li id="nav-fav"><i class="fas fa-heart"></i> <span>我的收藏</span></li>
                     <li id="nav-playlists"><i class="fas fa-list"></i> <span>我的歌单</span></li>
-                    <li id="nav-mount"><i class="fas fa-network-wired"></i> <span>目录管理</span></li>
+                    {% if is_admin %}<li id="nav-mount"><i class="fas fa-network-wired"></i> <span>目录管理</span></li>{% endif %}
                     <li id="nav-netease"><i class="fas fa-cloud-download-alt"></i> <span>网易下载</span></li>
                     <li id="nav-qqmusic"><i class="fab fa-qq"></i> <span>QQ音乐</span></li>
-                    <li id="nav-upload"><i class="fas fa-cloud-upload-alt"></i> <span>上传音乐</span></li>
+                    {% if is_admin %}<li id="nav-upload"><i class="fas fa-cloud-upload-alt"></i> <span>上传音乐</span></li>{% endif %}
                 </ul>
             </nav>
             <nav>
                 <ul>
-                    <li id="nav-settings"><i class="fas fa-cog"></i> <span>设置</span></li>
+                    {% if is_admin %}<li id="nav-settings"><i class="fas fa-cog"></i> <span>设置</span></li>{% endif %}
+                    <li id="nav-logout"><i class="fas fa-sign-out-alt"></i> <span>退出登录</span></li>
                 </ul>
             </nav>
         </aside>
@@ -202,6 +203,7 @@
                         <header class="netease-header">
                             <div class="netease-title-large">网易云下载</div>
                             <div class="netease-header-right">
+                                {% if is_admin %}
                                 <div id="netease-user-display" class="netease-user-display hidden">
                                     <div class="user-text">
                                         <div id="netease-user-name" class="user-name">User</div>
@@ -220,6 +222,7 @@
                                     </div>
                                 </div>
                                 <button id="netease-login-btn-top" class="btn-primary-small">登录</button>
+                                {% endif %}
                                 <button id="netease-download-floating" class="icon-btn" title="下载管理"><i
                                         class="fas fa-tasks"></i></button>
                             </div>
@@ -296,6 +299,7 @@
                         <header class="netease-header">
                             <div class="netease-title-large">QQ 音乐下载</div>
                             <div class="netease-header-right">
+                                {% if is_admin %}
                                 <div id="qqmusic-user-display" class="netease-user-display hidden">
                                     <div class="user-text">
                                         <div id="qqmusic-user-name" class="user-name">User</div>
@@ -312,6 +316,7 @@
                                     </div>
                                 </div>
                                 <button id="qqmusic-login-btn-top" class="btn-primary-small">登录</button>
+                                {% endif %}
                                 <button id="qqmusic-download-floating" class="icon-btn" title="下载管理"><i class="fas fa-tasks"></i></button>
                             </div>
                         </header>
