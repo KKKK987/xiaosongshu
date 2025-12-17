@@ -116,10 +116,12 @@ jobs:
         
         SOURCE_FPK_NAME="xiaosongshu-${{ steps.version.outputs.version }}-python.fpk"
         
-        if [ -f "xiaosongshu.fpk" ]; then
-          mv xiaosongshu.fpk "$SOURCE_FPK_NAME"
+        # 支持中文文件名 (manifest 中 appname = 小松鼠)
+        FPK_FILE=$(ls *.fpk 2>/dev/null | head -n1)
+        if [ -n "$FPK_FILE" ]; then
+          mv "$FPK_FILE" "$SOURCE_FPK_NAME"
         else
-          echo "Error: xiaosongshu.fpk not found!"
+          echo "❌ Error: No fpk file found!"
           exit 1
         fi
         
@@ -160,10 +162,12 @@ jobs:
         
         BINARY_FPK_NAME="xiaosongshu-${{ steps.version.outputs.version }}-amd64.fpk"
         
-        if [ -f "xiaosongshu.fpk" ]; then
-          mv xiaosongshu.fpk "$BINARY_FPK_NAME"
+        # 支持中文文件名 (manifest 中 appname = 小松鼠)
+        FPK_FILE=$(ls *.fpk 2>/dev/null | head -n1)
+        if [ -n "$FPK_FILE" ]; then
+          mv "$FPK_FILE" "$BINARY_FPK_NAME"
         else
-          echo "Error: xiaosongshu.fpk not found!"
+          echo "❌ Error: No fpk file found!"
           exit 1
         fi
         
@@ -193,11 +197,13 @@ jobs:
         SHORT_SHA=$(git rev-parse --short HEAD)
         PKG_NAME="xiaosongshu-preview-cgi-${VERSION}-${SHORT_SHA}.fpk"
         
-        # Find and Move
-        if [ -f "xiaosongshu-preview.fpk" ]; then
-          mv xiaosongshu-preview.fpk "../../$PKG_NAME"
+        # Find and Move (支持中文文件名)
+        FPK_FILE=$(ls *.fpk 2>/dev/null | head -n1)
+        if [ -n "$FPK_FILE" ]; then
+          mv "$FPK_FILE" "../../$PKG_NAME"
         else
-          mv *.fpk "../../$PKG_NAME" || echo "Warning: No fpk found!"
+          echo "❌ Error: No fpk file found!"
+          exit 1
         fi
         
         cd ../..

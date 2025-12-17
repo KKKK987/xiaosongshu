@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Debug 2FMusic Server",
+            "name": "Python: Debug xiaosongshu Server",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/app/server/app.py",
