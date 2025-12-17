@@ -381,6 +381,34 @@ def require_auth():
     # 静态资源和登录/注册页面不需要认证
     if path.startswith('/static') or path.startswith('/login') or path.startswith('/register') or path == '/favicon.ico':
         return
+    
+    # 预览功能允许的 API 路径（用于 CGI 代理和移动端 APP）
+    preview_allowed_paths = [
+        '/api/music/external/meta',
+        '/api/music/external/stream',
+        '/api/music/external/cover',
+        '/api/favorites',
+        '/api/songs',
+        '/api/playlists',
+        '/api/lyrics',
+    ]
+    
+    # 检查是否是预览相关的 API 请求
+    is_preview_api = any(path.startswith(p) for p in preview_allowed_paths)
+    
+    if is_preview_api:
+        # 来自 CGI 代理的请求（通过 X-Forwarded-Prefix 识别）
+        forwarded_prefix = request.headers.get('X-Forwarded-Prefix', '')
+        if 'index.cgi' in forwarded_prefix:
+            return
+        
+        # 来自飞牛移动端 APP 的请求（通过 User-Agent 或 Referer 识别）
+        user_agent = request.headers.get('User-Agent', '').lower()
+        referer = request.headers.get('Referer', '').lower()
+        # 飞牛 APP 或预览页面的请求
+        if 'fnos' in user_agent or 'fnnas' in user_agent or 'preview' in referer or 'index.cgi' in referer:
+            return
+    
     if session.get('authed') and session.get('user_hash'):
         return
     return _auth_failed()
