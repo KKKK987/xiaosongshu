@@ -5157,6 +5157,8 @@ def create_local_playlist():
                     qq_mid = song.get('mid') or song.get('qq_mid')
                     netease_id = song.get('netease_id')
                     source = song.get('source', 'qq')
+                    # 优先使用前端传递的 sort_order，否则使用索引
+                    sort_order = song.get('sort_order', idx)
                     
                     conn.execute('''
                         INSERT OR IGNORE INTO playlist_pending_songs 
@@ -5172,7 +5174,7 @@ def create_local_playlist():
                         song.get('cover', ''),
                         source,
                         now,
-                        idx  # 保存原始顺序
+                        sort_order  # 保存原始顺序
                     ))
                     pending_count += 1
                 except Exception as e:
@@ -5294,6 +5296,7 @@ def get_playlist_songs(playlist_id):
                     'album': row['album'],
                     'cover': cover,
                     'added_at': row['added_at'],
+                    'sort_order': row['sort_order'] or 0,
                     'is_local': True
                 })
             
@@ -5305,22 +5308,108 @@ def get_playlist_songs(playlist_id):
                 ORDER BY sort_order ASC, added_at ASC
             ''', (playlist_id,)).fetchall()
             
+            # 获取所有本地歌曲用于匹配
+            all_local_songs = conn.execute('SELECT id, title, artist, filename FROM songs').fetchall()
+            
             pending_songs = []
+            converted_count = 0
+            now = time.time()
+            
             for row in pending_rows:
-                pending_songs.append({
-                    'id': f"pending_{row['id']}",
-                    'pending_id': row['id'],
-                    'qq_mid': row['qq_mid'],
-                    'netease_id': row['netease_id'],
-                    'title': row['title'],
-                    'artist': row['artist'],
-                    'album': row['album'],
-                    'cover': row['cover'] or '/static/images/ICON_256.PNG',
-                    'source': row['source'],
-                    'added_at': row['added_at'],
-                    'is_local': False,
-                    'is_pending': True
-                })
+                # 检查是否已经在本地存在（通过标题和艺术家匹配）
+                pending_title = (row['title'] or '').lower().strip()
+                pending_artist = (row['artist'] or '').lower().strip()
+                
+                matched_local = None
+                for local in all_local_songs:
+                    local_title = (local['title'] or '').lower().strip()
+                    local_artist = (local['artist'] or '').lower().strip()
+                    # 精确匹配标题和艺术家
+                    if pending_title and local_title and pending_title == local_title:
+                        if not pending_artist or not local_artist or pending_artist == local_artist:
+                            matched_local = local
+                            break
+                    # 或者文件名包含标题
+                    filename_base = os.path.splitext(local['filename'] or '')[0].lower()
+                    if pending_title and pending_title in filename_base:
+                        matched_local = local
+                        break
+                
+                if matched_local:
+                    # 自动转换：删除待下载记录，添加本地歌曲
+                    try:
+                        conn.execute('DELETE FROM playlist_pending_songs WHERE id = ?', (row['id'],))
+                        conn.execute(
+                            'INSERT OR IGNORE INTO playlist_songs (playlist_id, song_id, added_at, sort_order) VALUES (?, ?, ?, ?)',
+                            (playlist_id, matched_local['id'], row['added_at'], row['sort_order'] or 0)
+                        )
+                        converted_count += 1
+                    except Exception as e:
+                        logger.warning(f'自动转换待下载歌曲失败: {e}')
+                        # 转换失败，仍然显示为待下载
+                        pending_songs.append({
+                            'id': f"pending_{row['id']}",
+                            'pending_id': row['id'],
+                            'qq_mid': row['qq_mid'],
+                            'netease_id': row['netease_id'],
+                            'title': row['title'],
+                            'artist': row['artist'],
+                            'album': row['album'],
+                            'cover': row['cover'] or '/static/images/ICON_256.PNG',
+                            'source': row['source'],
+                            'added_at': row['added_at'],
+                            'sort_order': row['sort_order'] or 0,
+                            'is_local': False,
+                            'is_pending': True
+                        })
+                else:
+                    # 本地没有，显示为待下载
+                    pending_songs.append({
+                        'id': f"pending_{row['id']}",
+                        'pending_id': row['id'],
+                        'qq_mid': row['qq_mid'],
+                        'netease_id': row['netease_id'],
+                        'title': row['title'],
+                        'artist': row['artist'],
+                        'album': row['album'],
+                        'cover': row['cover'] or '/static/images/ICON_256.PNG',
+                        'source': row['source'],
+                        'added_at': row['added_at'],
+                        'sort_order': row['sort_order'] or 0,
+                        'is_local': False,
+                        'is_pending': True
+                    })
+            
+            if converted_count > 0:
+                conn.execute('UPDATE playlists SET updated_at = ? WHERE id = ?', (now, playlist_id))
+                conn.commit()
+                logger.info(f'歌单 {playlist_id} 自动转换了 {converted_count} 首待下载歌曲')
+                # 重新获取本地歌曲列表
+                rows = conn.execute('''
+                    SELECT s.id, s.path, s.filename, s.title, s.artist, s.album, s.has_cover, ps.added_at, ps.sort_order
+                    FROM playlist_songs ps
+                    JOIN songs s ON ps.song_id = s.id
+                    WHERE ps.playlist_id = ?
+                    ORDER BY ps.sort_order ASC, ps.added_at ASC
+                ''', (playlist_id,)).fetchall()
+                
+                songs = []
+                for r in rows:
+                    base_name = os.path.splitext(r['filename'])[0]
+                    cover = '/static/images/ICON_256.PNG'
+                    if r['has_cover']:
+                        cover = f"/api/music/covers/{quote(base_name)}.jpg?filename={quote(r['filename'])}"
+                    songs.append({
+                        'id': r['id'],
+                        'filename': r['filename'],
+                        'title': r['title'],
+                        'artist': r['artist'],
+                        'album': r['album'],
+                        'cover': cover,
+                        'added_at': r['added_at'],
+                        'sort_order': r['sort_order'] or 0,
+                        'is_local': True
+                    })
             
             return jsonify({
                 'success': True,
@@ -5343,6 +5432,7 @@ def add_song_to_playlist(playlist_id):
     try:
         data = request.get_json() or {}
         song_id = data.get('song_id')
+        sort_order = data.get('sort_order')  # 可选的排序顺序
         
         if not song_id:
             return jsonify({'success': False, 'error': '缺少歌曲ID'})
@@ -5364,17 +5454,19 @@ def add_song_to_playlist(playlist_id):
             if not song:
                 return jsonify({'success': False, 'error': '歌曲不存在'})
             
-            # 添加到歌单（忽略重复），新歌曲排在最后
+            # 添加到歌单（忽略重复）
             try:
-                # 获取当前最大的 sort_order
-                max_order = conn.execute(
-                    'SELECT COALESCE(MAX(sort_order), -1) FROM playlist_songs WHERE playlist_id = ?',
-                    (playlist_id,)
-                ).fetchone()[0]
+                # 如果没有指定 sort_order，则排在最后
+                if sort_order is None:
+                    max_order = conn.execute(
+                        'SELECT COALESCE(MAX(sort_order), -1) FROM playlist_songs WHERE playlist_id = ?',
+                        (playlist_id,)
+                    ).fetchone()[0]
+                    sort_order = max_order + 1
                 
                 conn.execute(
                     'INSERT OR IGNORE INTO playlist_songs (playlist_id, song_id, added_at, sort_order) VALUES (?, ?, ?, ?)',
-                    (playlist_id, song_id, now, max_order + 1)
+                    (playlist_id, song_id, now, sort_order)
                 )
                 conn.execute('UPDATE playlists SET updated_at = ? WHERE id = ?', (now, playlist_id))
                 conn.commit()

@@ -1061,12 +1061,20 @@ let pendingSongForPlaylist = null;
 // 加载歌单列表
 async function loadPlaylists() {
   if (!ui.playlistsContainer) return;
+  
+  // 记录当前展开的歌单ID
+  const expandedIds = [];
+  ui.playlistsContainer.querySelectorAll('.playlist-wrapper.expanded').forEach(wrapper => {
+    const id = wrapper.dataset.playlistId;
+    if (id) expandedIds.push(parseInt(id));
+  });
+  
   ui.playlistsContainer.innerHTML = '<div class="loading-text" style="padding: 4rem 0; opacity: 0.6;">加载中...</div>';
   
   try {
     const res = await api.playlists.list();
     if (res.success) {
-      renderPlaylists(res.playlists || []);
+      renderPlaylists(res.playlists || [], expandedIds);
     } else {
       ui.playlistsContainer.innerHTML = `<div class="loading-text" style="padding: 4rem 0; opacity: 0.6;">${res.error || '加载失败'}</div>`;
     }
@@ -1077,7 +1085,7 @@ async function loadPlaylists() {
 }
 
 // 渲染歌单列表（展开式）
-function renderPlaylists(playlists) {
+function renderPlaylists(playlists, expandedIds = []) {
   if (!ui.playlistsContainer) return;
   
   if (playlists.length === 0) {
@@ -1154,6 +1162,28 @@ function renderPlaylists(playlists) {
     wrapper.appendChild(item);
     wrapper.appendChild(songsArea);
     frag.appendChild(wrapper);
+    
+    // 如果之前是展开状态，自动展开并加载歌曲
+    if (expandedIds.includes(pl.id)) {
+      wrapper.classList.add('expanded');
+      songsArea.classList.remove('hidden');
+      const icon = wrapper.querySelector('.playlist-expand-icon');
+      if (icon) icon.classList.add('rotated');
+      // 异步加载歌曲
+      (async () => {
+        try {
+          const res = await api.playlists.getSongs(pl.id);
+          if (res.success) {
+            renderPlaylistSongsInline(res.songs, res.pending_songs || [], pl.id, songsArea);
+          } else {
+            songsArea.innerHTML = `<div class="loading-text" style="padding: 2rem 0; opacity: 0.6;">${res.error || '加载失败'}</div>`;
+          }
+        } catch (e) {
+          console.error('Load playlist songs error:', e);
+          songsArea.innerHTML = '<div class="loading-text" style="padding: 2rem 0; opacity: 0.6;">加载失败</div>';
+        }
+      })();
+    }
   });
   
   ui.playlistsContainer.appendChild(frag);
@@ -1201,67 +1231,21 @@ function renderPlaylistSongsInline(songs, pendingSongs, playlistId, container) {
     return;
   }
   
+  // 合并本地歌曲和待下载歌曲，按 sort_order 排序
+  const allSongs = [
+    ...songs.map(s => ({ ...s, _type: 'local' })),
+    ...(pendingSongs || []).map(s => ({ ...s, _type: 'pending' }))
+  ].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  
   container.innerHTML = '';
   
   const songsGrid = document.createElement('div');
   songsGrid.className = 'playlist-songs-grid';
   
-  // 渲染本地歌曲
-  songs.forEach((song, index) => {
-    const card = document.createElement('div');
-    card.className = 'song-card mini';
-    card.dataset.index = index;
-    
-    card.innerHTML = `
-      <button class="card-fav-btn card-remove-btn" title="从歌单移除"><i class="fas fa-minus"></i></button>
-      <img src="${song.cover}" loading="lazy">
-      <div class="card-info">
-        <div class="title" title="${song.title}">${song.title}</div>
-        <div class="artist">${song.artist}</div>
-      </div>
-    `;
-    
-    card.addEventListener('click', (e) => {
-      if (!e.target.closest('.card-fav-btn')) {
-        const fullSong = state.fullPlaylist.find(s => s.id === song.id);
-        if (fullSong) {
-          // 使用歌单中的封面信息，合并到完整歌曲信息中
-          const songWithCover = { ...fullSong, cover: song.cover || fullSong.cover };
-          const idx = state.fullPlaylist.indexOf(fullSong);
-          state.playQueue = [...state.fullPlaylist];
-          // 更新播放队列中对应歌曲的封面
-          state.playQueue[idx] = songWithCover;
-          playTrack(idx);
-        } else {
-          showDownloadSourceDialog(song);
-        }
-      }
-    });
-    
-    card.querySelector('.card-fav-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      showConfirmDialog('移除歌曲', `确定要从歌单中移除<br><b>${song.title}</b> 吗？`, async () => {
-        try {
-          const res = await api.playlists.removeSong(playlistId, song.id);
-          if (res.success) {
-            showToast('已从歌单移除');
-            card.remove();
-            updatePlaylistSongCount(container);
-          } else {
-            showToast(res.error || '移除失败');
-          }
-        } catch (err) {
-          showToast('移除失败');
-        }
-      });
-    });
-    
-    songsGrid.appendChild(card);
-  });
-  
-  // 渲染待下载歌曲
-  if (pendingSongs && pendingSongs.length > 0) {
-    pendingSongs.forEach((song, index) => {
+  // 渲染所有歌曲（按原始顺序）
+  allSongs.forEach((song, index) => {
+    if (song._type === 'pending') {
+      // 渲染待下载歌曲
       const card = document.createElement('div');
       card.className = 'song-card mini pending';
       card.dataset.pendingId = song.pending_id;
@@ -1317,8 +1301,60 @@ function renderPlaylistSongsInline(songs, pendingSongs, playlistId, container) {
       });
       
       songsGrid.appendChild(card);
+      return;
+    }
+    
+    // 渲染本地歌曲
+    const card = document.createElement('div');
+    card.className = 'song-card mini';
+    card.dataset.index = index;
+    
+    card.innerHTML = `
+      <button class="card-fav-btn card-remove-btn" title="从歌单移除"><i class="fas fa-minus"></i></button>
+      <img src="${song.cover}" loading="lazy">
+      <div class="card-info">
+        <div class="title" title="${song.title}">${song.title}</div>
+        <div class="artist">${song.artist}</div>
+      </div>
+    `;
+    
+    card.addEventListener('click', (e) => {
+      if (!e.target.closest('.card-fav-btn')) {
+        const fullSong = state.fullPlaylist.find(s => s.id === song.id);
+        if (fullSong) {
+          // 使用歌单中的封面信息，合并到完整歌曲信息中
+          const songWithCover = { ...fullSong, cover: song.cover || fullSong.cover };
+          const idx = state.fullPlaylist.indexOf(fullSong);
+          state.playQueue = [...state.fullPlaylist];
+          // 更新播放队列中对应歌曲的封面
+          state.playQueue[idx] = songWithCover;
+          playTrack(idx);
+        } else {
+          showDownloadSourceDialog(song);
+        }
+      }
     });
-  }
+    
+    card.querySelector('.card-fav-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      showConfirmDialog('移除歌曲', `确定要从歌单中移除<br><b>${song.title}</b> 吗？`, async () => {
+        try {
+          const res = await api.playlists.removeSong(playlistId, song.id);
+          if (res.success) {
+            showToast('已从歌单移除');
+            card.remove();
+            updatePlaylistSongCount(container);
+          } else {
+            showToast(res.error || '移除失败');
+          }
+        } catch (err) {
+          showToast('移除失败');
+        }
+      });
+    });
+    
+    songsGrid.appendChild(card);
+  });
   
   container.appendChild(songsGrid);
 }
@@ -1659,41 +1695,26 @@ function showDownloadSourceDialog(song) {
 
 // 切换到指定标签页并搜索
 function switchToTabAndSearch(tabName, query) {
-  // 切换标签页
-  const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
-  if (tabBtn) {
-    tabBtn.click();
-  }
+  // 直接调用 switchTab 函数切换标签页
+  switchTab(tabName);
   
   // 延迟填充搜索框并触发搜索
   setTimeout(() => {
     if (tabName === 'qqmusic') {
-      const input = document.getElementById('qqmusic-keywords');
+      const input = document.getElementById('qqmusic-global-input');
       if (input) {
         input.value = query;
         input.focus();
-        // 触发搜索
-        const searchBtn = input.nextElementSibling;
-        if (searchBtn && searchBtn.tagName === 'BUTTON') {
-          searchBtn.click();
-        } else {
-          // 模拟回车
-          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
-        }
+        // 模拟回车触发搜索
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       }
     } else if (tabName === 'netease') {
-      const input = document.getElementById('netease-keywords');
+      const input = document.getElementById('netease-global-input');
       if (input) {
         input.value = query;
         input.focus();
-        // 触发搜索
-        const searchBtn = input.nextElementSibling;
-        if (searchBtn && searchBtn.tagName === 'BUTTON') {
-          searchBtn.click();
-        } else {
-          // 模拟回车
-          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
-        }
+        // 模拟回车触发搜索
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       }
     }
   }, 300);

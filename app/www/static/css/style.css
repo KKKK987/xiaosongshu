@@ -2046,7 +2046,7 @@ select:focus {
         /* 水平排列图片和文字 */
         align-items: center;
         padding: 0.6rem;
-        gap: 0.8rem;
+        gap: 0.5rem;
         width: 100%;
         background: rgba(40, 40, 40, 0.4);
         margin-bottom: 0;
@@ -2059,6 +2059,7 @@ select:focus {
         width: 3.2rem;
         margin: 0;
         flex-shrink: 0;
+        order: 0;
     }
 
     .song-card .card-info {
@@ -2068,6 +2069,7 @@ select:focus {
         display: flex;
         flex-direction: column;
         justify-content: center;
+        order: 1;
     }
 
     .song-card .title {
@@ -2079,16 +2081,30 @@ select:focus {
         font-size: 0.85rem;
     }
 
-    /* 手机端收藏按钮：始终显示，放在最右侧 */
+    /* 手机端收藏按钮：始终显示，放在右侧 */
     .card-fav-btn {
         position: static;
         opacity: 1;
         background: transparent;
-        margin-left: auto;
         font-size: 1.2rem;
-        width: 2.5rem;
+        width: 2.2rem;
         height: 2.5rem;
         color: var(--text-sub);
+        flex-shrink: 0;
+        order: 2;
+    }
+
+    /* 手机端添加歌单按钮：始终显示，放在收藏按钮旁边 */
+    .card-add-btn {
+        position: static;
+        opacity: 1;
+        background: transparent;
+        font-size: 1.2rem;
+        width: 2.2rem;
+        height: 2.5rem;
+        color: var(--text-sub);
+        flex-shrink: 0;
+        order: 3;
     }
 
     /* 底部播放条简化 */
@@ -3635,7 +3651,24 @@ select:focus {
 
     /* 调整搜索框上方间距 - 使用负边距抵消 content-scroll 默认 padding */
     .netease-search-hero {
-        margin-top: -2rem !important;
+        margin-top: 0 !important;
+        margin-bottom: 1rem !important;
+        padding: 0 0.5rem;
+    }
+    
+    /* 移动端搜索框样式优化 */
+    .netease-search-hero .search-box {
+        height: 2.8rem;
+        padding: 0.5rem 1rem;
+        border-radius: 1.5rem;
+    }
+    
+    .netease-search-hero .search-box input[type="text"] {
+        font-size: 0.9rem;
+    }
+    
+    .netease-search-hero .search-box:focus-within {
+        width: 100%;
     }
 }
 
@@ -4409,6 +4442,7 @@ select:focus {
         aspect-ratio: auto;
         margin: 0;
         flex-shrink: 0;
+        order: 0;
     }
     
     .song-card.mini .card-info {
@@ -4418,6 +4452,7 @@ select:focus {
         flex-direction: column;
         justify-content: center;
         padding: 0;
+        order: 1;
     }
     
     .song-card.mini .card-info .title {
@@ -4429,16 +4464,20 @@ select:focus {
         font-size: 0.85rem;
     }
     
-    /* 移除按钮：和收藏按钮一样的样式 */
+    /* 移除按钮：移动端始终显示，和收藏按钮样式一致 */
     .song-card.mini .card-remove-btn {
         position: static;
         opacity: 1;
         background: transparent;
-        margin-left: auto;
         font-size: 1.2rem;
-        width: 2.5rem;
+        width: 2.2rem;
         height: 2.5rem;
-        color: var(--text-sub);
+        color: #ff4d4d;
+        flex-shrink: 0;
+        order: 2;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
     
     /* 待下载徽章调整 */

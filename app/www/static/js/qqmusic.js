@@ -1,7 +1,7 @@
 import { state } from './state.js';
 import { ui } from './ui.js';
 import { api } from './api.js';
-import { playTrack } from './player.js';
+import { playTrack, loadPlaylists } from './player.js';
 import { showToast, formatTime } from './utils.js';
 
 // QQ 音乐业务模块
@@ -645,6 +645,8 @@ async function startQQDownload({ taskId, song, btnEl, fileType }) {
                   if (songRefreshCallback) await songRefreshCallback();
                   // 如果有待添加的歌单，将下载的歌曲添加进去
                   await addDownloadedSongToPlaylist(song, false);
+                  // 刷新歌单列表以更新待下载状态
+                  loadPlaylists();
                 } else {
                   console.warn(`下载失败: ${song.title} - ${tData.message || '未知错误'}`);
                   // 下载失败也要处理歌单状态
@@ -926,10 +928,10 @@ function showQQPlaylistImportDialog(playlistName, allSongs, localSongs, missingS
     overlay.remove();
   });
   
-  // 仅创建歌单（添加本地已有的歌曲）
+  // 仅创建歌单（添加所有歌曲，包括本地没有的作为待下载状态）
   overlay.querySelector('#qq-import-create-only').addEventListener('click', async () => {
     overlay.remove();
-    await createLocalPlaylistFromQQ(playlistName, localSongs);
+    await createLocalPlaylistFromQQWithPending(playlistName, allSongs, localSongs, missingSongs);
   });
   
   // 创建歌单并下载缺少的歌曲
@@ -958,7 +960,81 @@ function showQQPlaylistImportDialog(playlistName, allSongs, localSongs, missingS
   });
 }
 
-// 从QQ歌单创建本地歌单
+// 从QQ歌单创建本地歌单（包含待下载歌曲）
+async function createLocalPlaylistFromQQWithPending(playlistName, allSongs, localSongs, missingSongs) {
+  try {
+    // 为所有歌曲计算原始顺序索引
+    const songOrderMap = new Map();
+    allSongs.forEach((song, idx) => {
+      songOrderMap.set(song.mid, idx);
+    });
+    
+    // 创建歌单，同时保存待下载歌曲的元信息（包含原始顺序）
+    const createRes = await fetch('/api/playlists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        name: playlistName,
+        // 保存待下载歌曲的元信息（包含原始顺序）
+        pending_songs: missingSongs.map(s => ({
+          mid: s.mid,
+          title: s.title,
+          artist: s.artist,
+          album: s.album,
+          cover: s.cover,
+          source: 'qq',
+          sort_order: songOrderMap.get(s.mid) ?? 9999
+        }))
+      })
+    });
+    const createJson = await createRes.json();
+    
+    if (!createJson.success) {
+      showToast(createJson.error || '创建歌单失败');
+      return null;
+    }
+    
+    const playlistId = createJson.playlist.id;
+    
+    // 添加本地已有的歌曲到歌单（包含原始顺序）
+    let addedCount = 0;
+    for (const song of localSongs) {
+      const localSong = state.fullPlaylist.find(local => isSameSong(local, song));
+      if (localSong && localSong.id) {
+        try {
+          const sortOrder = songOrderMap.get(song.mid) ?? 9999;
+          const addRes = await fetch(`/api/playlists/${playlistId}/songs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ song_id: localSong.id, sort_order: sortOrder })
+          });
+          const addJson = await addRes.json();
+          if (addJson.success) addedCount++;
+        } catch (e) {
+          console.error('Add song to playlist error:', e);
+        }
+      }
+    }
+    
+    const pendingCount = missingSongs.length;
+    if (pendingCount > 0) {
+      showToast(`已创建歌单 "${playlistName}"，添加了 ${addedCount} 首本地歌曲，${pendingCount} 首待下载`);
+    } else {
+      showToast(`已创建歌单 "${playlistName}"，添加了 ${addedCount} 首歌曲`);
+    }
+    
+    // 刷新歌单列表
+    loadPlaylists();
+    
+    return createJson.playlist;
+  } catch (e) {
+    console.error('Create playlist from QQ error:', e);
+    showToast('创建歌单失败');
+    return null;
+  }
+}
+
+// 从QQ歌单创建本地歌单（仅本地已有的歌曲）
 async function createLocalPlaylistFromQQ(playlistName, songs, silent = false) {
   try {
     // 创建歌单
@@ -1172,6 +1248,8 @@ async function addDownloadedSongToPlaylist(song, downloadFailed = false) {
       showToast(`歌单 "${playlistName}" 已完成导入，添加了 ${added} 首歌曲`);
     }
     state.pendingPlaylistForDownload = null;
+    // 刷新歌单列表
+    loadPlaylists();
   }
 }
 
