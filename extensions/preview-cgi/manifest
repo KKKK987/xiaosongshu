@@ -1,5 +1,5 @@
-appname               = 小松鼠-preview
-version               = 0.0.4
+appname               = xiaosongshu-preview
+version               = 0.0.5
 display_name          = 小松鼠 Preview
 desc                  = """
 <p><b>xiaosongshu 预览扩展 (CGI版)</b></p>
@@ -14,4 +14,4 @@ distributor           = KKKK987
 distributor_url       = https://github.com/KKKK987/xiaosongshu
 source                = thirdparty
 desktop_uidir         = ui
-install_dep_apps      = 小松鼠
+install_dep_apps      = xiaosongshu
