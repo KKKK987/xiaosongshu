@@ -1,5 +1,5 @@
 appname               = 小松鼠-preview
-version               = 0.0.3
+version               = 0.0.4
 display_name          = 小松鼠 Preview
 desc                  = """
 <p><b>xiaosongshu 预览扩展 (CGI版)</b></p>
