@@ -700,6 +700,26 @@ function updatePlayState() {
 }
 
 export function bindPlayerEvents() {
+  // 播放状态标签显示"正在播放"或"已暂停"
+  const playingLabel = document.getElementById('fp-playing-label');
+  const pausedLabel = document.getElementById('fp-paused-label');
+  function updatePlayingLabel() {
+    if (ui.audio && !ui.audio.paused && !ui.audio.ended) {
+      if (playingLabel) playingLabel.style.display = '';
+      if (pausedLabel) pausedLabel.style.display = 'none';
+    } else {
+      if (playingLabel) playingLabel.style.display = 'none';
+      if (pausedLabel) pausedLabel.style.display = '';
+    }
+  }
+
+  if (ui.audio) {
+    ui.audio.addEventListener('play', updatePlayingLabel);
+    ui.audio.addEventListener('pause', updatePlayingLabel);
+    ui.audio.addEventListener('ended', updatePlayingLabel);
+    updatePlayingLabel();
+  }
+
   [ui.btnPlay, ui.fpBtnPlay, ui.mobileMiniPlay].forEach(btn => btn?.addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); }));
   [ui.btnPrev, ui.fpBtnPrev].forEach(btn => btn?.addEventListener('click', prevTrack));
   [ui.btnNext, ui.fpBtnNext].forEach(btn => btn?.addEventListener('click', nextTrack));

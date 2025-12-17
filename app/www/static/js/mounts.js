@@ -55,8 +55,8 @@ export function startScanPolling(isUserAction = false, onRefreshSongs, onRefresh
     } catch (e) {
       console.error('Poll error', e);
     } finally {
-      // 动态调整间隔：正在扫描时 1s，闲置时 2s
-      const delay = hasTrackedScan ? 1000 : 2000;
+      // 动态调整间隔：正在扫描时 1s，闲置时 5s
+      const delay = hasTrackedScan ? 1000 : 5000;
       setTimeout(poll, delay);
     }
   };
@@ -141,6 +141,14 @@ export function trackMountProgress(onDone) {
 }
 
 export function initMounts(onRefreshSongs) {
+  const closeBtn = document.getElementById('close-upload-modal');
+  if (closeBtn) {
+    closeBtn.onclick = () => {
+      const modal = document.getElementById('upload-modal');
+      if (modal) modal.classList.remove('active');
+    };
+  }
+
   if (ui.btnAddMount) {
     ui.btnAddMount.addEventListener('click', () => {
       const path = ui.mountPathInput?.value.trim();
