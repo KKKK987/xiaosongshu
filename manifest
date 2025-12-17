@@ -1,5 +1,5 @@
-appname               = xiaosongshu
-version               = 0.0.8
+appname               = 小松鼠
+version               = 0.0.9
 display_name          = 小松鼠
 desc                  = """
 <p><b>小松鼠</b> 简洁高效的本地音乐播放器，专为 FNOS 而设计。</p>
@@ -17,7 +17,7 @@ source                = thirdparty
 maintainer            = KKKK987
 maintainer_url        = https://github.com/KKKK987/xiaosongshu
 distributor           = KKKK987
-distributor_url       = https://www.2fstore.cfd
+distributor_url       = https://github.com/KKKK987/xiaosongshu
 desktop_uidir         = ui
 desktop_applaunchname = xiaosongshu.Application
 service_port          = 28999

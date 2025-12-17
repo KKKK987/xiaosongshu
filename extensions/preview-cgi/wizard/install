@@ -5,7 +5,7 @@
       {
         "type": "password",
         "field": "wizard_password",
-        "label": "请输入 xiaosongshu 主程序的访问密码",
+        "label": "请输入 小松鼠 主程序的访问密码",
         "rules": [
           {
             "required": true,
