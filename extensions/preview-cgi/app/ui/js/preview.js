@@ -46,14 +46,38 @@ function initUI() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    const params = new URLSearchParams(window.location.search);
+    let path = params.get('path') || params.get('file') || params.get('filepath') || params.get('url') || params.get('src');
+
+    // 检测移动端 APP - 显示提示信息
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile && path) {
+        // 移动端 APP 的 WebView 不支持音频播放，显示提示页面
+        document.body.innerHTML = `
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:linear-gradient(to bottom,#2c3e50,#000);color:#fff;text-align:center;padding:2rem;">
+                <img src="index.cgi/images/icon_256.png" style="width:80px;height:80px;border-radius:16px;margin-bottom:1.5rem;">
+                <h2 style="margin:0 0 1rem;font-size:1.3rem;">移动端暂不支持预览播放</h2>
+                <p style="margin:0 0 2rem;opacity:0.7;font-size:0.95rem;line-height:1.6;">
+                    飞牛 APP 的内置浏览器不支持音频播放<br>
+                    请打开「小松鼠」应用播放此歌曲
+                </p>
+                <div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:1rem;margin-bottom:1.5rem;max-width:90%;word-break:break-all;">
+                    <div style="font-size:0.8rem;opacity:0.6;margin-bottom:0.5rem;">文件路径</div>
+                    <div style="font-size:0.85rem;">${path}</div>
+                </div>
+                <button onclick="window.close()" style="padding:0.8rem 2rem;border:none;border-radius:8px;background:linear-gradient(135deg,#6c5ce7,#a29bfe);color:#fff;font-size:1rem;cursor:pointer;">
+                    关闭
+                </button>
+            </div>
+        `;
+        return; // 停止执行
+    }
+
     initUI();
     autoResizeUI();
     updateModeUI(); // 初始化模式图标
     window.addEventListener('resize', () => requestAnimationFrame(autoResizeUI));
     bindEvents();
-
-    const params = new URLSearchParams(window.location.search);
-    let path = params.get('path') || params.get('file') || params.get('filepath') || params.get('url') || params.get('src');
 
     // 同步收藏状态
     try {
@@ -277,20 +301,21 @@ async function loadPreviewTrack(path) {
 
         updateTrackUi();
 
-        // Detect mobile 没办法，解决不了移动端CGI传输音频的问题，希望有大佬修复！
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-
-        if (isMobile) {
-            showToast("移动端仅支持查看元数据！");
-            // Hide playback controls
-            if (ui.playBtn) ui.playBtn.style.display = 'none';
-            if (ui.progressBar) ui.progressBar.parentElement.style.visibility = 'hidden';
-            if (ui.modeBtn) ui.modeBtn.style.visibility = 'hidden';
-            // Do NOT set audio source or play
-        } else {
-            state.audio.src = state.track.src;
-            try { await state.audio.play(); } catch (e) {
-                if (e.name !== 'AbortError') console.warn("Autoplay blocked/failed", e);
+        // 移动端 CGI 代理播放音频有问题，这是已知限制
+        // 尝试使用 CGI 代理播放，如果失败则显示提示
+        state.audio.src = state.track.src;
+        
+        try {
+            await state.audio.play();
+        } catch (e) {
+            // AbortError 和 NotAllowedError 是浏览器自动播放策略导致的，属于正常情况
+            if (e.name !== 'AbortError' && e.name !== 'NotAllowedError') {
+                console.warn("Playback failed", e);
+                // 检测是否是移动端
+                const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                if (isMobile) {
+                    showToast("移动端播放可能受限，请尝试手动点击播放");
+                }
             }
         }
 
