@@ -88,3 +88,10 @@ python app/server/app.py --music-library-path ./Music --log-path ./app.log --por
 *  普通用户的网易云和QQ音乐页面不再显示用户账户/登录按钮(有管理员提供账号)
 
 *  进入 QQ 音乐页面时，自动加载热门推荐歌曲
+*  CGI代理预览401认证问题
+*  移动端歌曲卡片按钮位置
+*  QQ歌单导入包含待下载歌曲（pending_songs）
+*  移动端QQ搜索框位置和播放列表删除按钮样式
+*  下载源对话框标签页切换问题
+*  播放列表歌曲排序和展开状态保持
+*  添加cryptography依赖支持QIMEI生成

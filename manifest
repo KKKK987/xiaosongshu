@@ -1,5 +1,5 @@
 appname               = xiaosongshu
-version               = 0.1.1
+version               = 0.1.2
 display_name          = 小松鼠
 desc                  = """
 <p><b>小松鼠</b> 简洁高效的本地音乐播放器，专为 FNOS 而设计。</p>
