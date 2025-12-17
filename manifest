@@ -19,6 +19,6 @@ maintainer_url        = https://github.com/KKKK987/xiaosongshu
 distributor           = KKKK987
 distributor_url       = https://github.com/KKKK987/xiaosongshu
 desktop_uidir         = ui
-desktop_applaunchname = xiaosongshu.Application
+desktop_applaunchname = 小松鼠.Application
 service_port          = 28999
 install_dep_apps      = python312

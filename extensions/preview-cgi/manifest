@@ -14,4 +14,4 @@ distributor           = KKKK987
 distributor_url       = https://github.com/KKKK987/xiaosongshu
 source                = thirdparty
 desktop_uidir         = ui
-install_dep_apps      = xiaosongshu
+install_dep_apps      = 小松鼠
