@@ -391,10 +391,23 @@ def require_auth():
         '/api/songs',
         '/api/playlists',
         '/api/lyrics',
+        '/api/qqmusic/search',
+        '/api/qqmusic/song/url',
+        '/api/netease/search',
     ]
     
     # 检查是否是预览相关的 API 请求
     is_preview_api = any(path.startswith(p) for p in preview_allowed_paths)
+    
+    # 外部点歌 API 白名单（无需认证）
+    external_api_paths = [
+        '/api/qqmusic/search',
+        '/api/qqmusic/song/url',
+        '/api/netease/search',
+    ]
+    is_external_api = any(path.startswith(p) for p in external_api_paths)
+    if is_external_api:
+        return  # 允许外部直接访问搜索和播放链接 API
     
     if is_preview_api:
         # 来自 CGI 代理的请求（通过 X-Forwarded-Prefix 识别）
