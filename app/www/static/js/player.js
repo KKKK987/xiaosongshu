@@ -1342,13 +1342,21 @@ function renderPlaylistSongsInline(songs, pendingSongs, playlistId, container) {
       if (!e.target.closest('.card-fav-btn')) {
         const fullSong = state.fullPlaylist.find(s => s.id === song.id);
         if (fullSong) {
-          // 使用歌单中的封面信息，合并到完整歌曲信息中
-          const songWithCover = { ...fullSong, cover: song.cover || fullSong.cover };
-          const idx = state.fullPlaylist.indexOf(fullSong);
-          state.playQueue = [...state.fullPlaylist];
-          // 更新播放队列中对应歌曲的封面
-          state.playQueue[idx] = songWithCover;
-          playTrack(idx);
+          // 构建歌单播放队列：只包含歌单中已下载的本地歌曲
+          const playlistLocalSongs = allSongs
+            .filter(s => s._type === 'local')
+            .map(s => {
+              const full = state.fullPlaylist.find(f => f.id === s.id);
+              return full ? { ...full, cover: s.cover || full.cover } : null;
+            })
+            .filter(Boolean);
+          
+          // 找到当前歌曲在歌单播放队列中的索引
+          const playlistIdx = playlistLocalSongs.findIndex(s => s.id === song.id);
+          if (playlistIdx !== -1) {
+            state.playQueue = playlistLocalSongs;
+            playTrack(playlistIdx);
+          }
         } else {
           showDownloadSourceDialog(song);
         }
