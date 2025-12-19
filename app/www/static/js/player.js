@@ -252,6 +252,7 @@ export function switchTab(tab) {
   ui.navQQMusic?.classList.remove('active');
   ui.navUpload?.classList.remove('active');
   ui.navSettings?.classList.remove('active');
+  document.getElementById('nav-admin')?.classList.remove('active');
 
   ui.viewPlayer?.classList.add('hidden');
   ui.viewPlaylists?.classList.add('hidden');
@@ -260,6 +261,7 @@ export function switchTab(tab) {
   ui.viewQQMusic?.classList.add('hidden');
   ui.viewUpload?.classList.add('hidden');
   ui.viewSettings?.classList.add('hidden');
+  document.getElementById('view-admin')?.classList.add('hidden');
 
   if (tab === 'local') ui.navLocal?.classList.add('active');
   else if (tab === 'fav') ui.navFav?.classList.add('active');
@@ -269,6 +271,7 @@ export function switchTab(tab) {
   else if (tab === 'qqmusic') ui.navQQMusic?.classList.add('active');
   else if (tab === 'upload') ui.navUpload?.classList.add('active');
   else if (tab === 'settings') ui.navSettings?.classList.add('active');
+  else if (tab === 'admin') document.getElementById('nav-admin')?.classList.add('active');
 
   if (tab === 'playlists') {
     ui.viewPlaylists?.classList.remove('hidden');
@@ -284,6 +287,8 @@ export function switchTab(tab) {
     ui.viewUpload?.classList.remove('hidden');
   } else if (tab === 'settings') {
     ui.viewSettings?.classList.remove('hidden');
+  } else if (tab === 'admin') {
+    document.getElementById('view-admin')?.classList.remove('hidden');
   } else {
     // local or fav
     ui.viewPlayer?.classList.remove('hidden');
@@ -312,7 +317,8 @@ export function switchTab(tab) {
     'netease': '网易下载',
     'qqmusic': 'QQ音乐',
     'upload': '上传音乐',
-    'settings': '系统设置'
+    'settings': '系统设置',
+    'admin': '用户管理'
   };
   if (ui.mobileTitle) ui.mobileTitle.innerText = titles[tab] || '小松鼠';
 
@@ -404,6 +410,7 @@ export async function playTrack(index, autoPlay = true) {
       state.isPlaying = true;
       updatePlayState();
       requestWakeLock();
+      // 播放历史将在 loadedmetadata 事件中记录（获取正确的时长）
     }
     catch (e) { console.error('Auto-play blocked:', e); state.isPlaying = false; updatePlayState(); }
   }
@@ -550,6 +557,14 @@ ui.audio.addEventListener('timeupdate', () => {
 ui.audio.addEventListener('loadedmetadata', () => {
   const totalStr = formatTime(ui.audio.duration);
   ['time-total', 'fp-time-total'].forEach(id => { const el = document.getElementById(id); if (el) el.innerText = totalStr; });
+  
+  // 记录播放历史（包含时长）
+  const currentTrack = state.playQueue[state.currentTrackIndex];
+  if (currentTrack && !currentTrack._historyRecorded) {
+    currentTrack._historyRecorded = true;
+    const duration = Math.floor(ui.audio.duration || 0);
+    api.play.record(currentTrack.id, currentTrack.title, currentTrack.artist, duration).catch(e => console.warn('记录播放历史失败:', e));
+  }
 });
 
 // Progress Bar Logic
@@ -1245,7 +1260,11 @@ async function togglePlaylistExpand(playlistId, playlistName, wrapper, songsArea
 function renderPlaylistSongsInline(songs, pendingSongs, playlistId, container) {
   if (!container) return;
   
-  const totalCount = songs.length + (pendingSongs?.length || 0);
+  // 过滤掉无效的歌曲数据
+  const validSongs = (songs || []).filter(s => s && s.id && s.title);
+  const validPendingSongs = (pendingSongs || []).filter(s => s && s.pending_id && s.title);
+  
+  const totalCount = validSongs.length + validPendingSongs.length;
   if (totalCount === 0) {
     container.innerHTML = '<div class="loading-text" style="padding: 2rem 0; opacity: 0.6;">歌单为空</div>';
     return;
@@ -1253,8 +1272,8 @@ function renderPlaylistSongsInline(songs, pendingSongs, playlistId, container) {
   
   // 合并本地歌曲和待下载歌曲，按 sort_order 排序
   const allSongs = [
-    ...songs.map(s => ({ ...s, _type: 'local' })),
-    ...(pendingSongs || []).map(s => ({ ...s, _type: 'pending' }))
+    ...validSongs.map(s => ({ ...s, _type: 'local' })),
+    ...validPendingSongs.map(s => ({ ...s, _type: 'pending' }))
   ].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   
   container.innerHTML = '';

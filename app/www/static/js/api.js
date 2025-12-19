@@ -279,5 +279,67 @@ export const api = {
       const res = await fetch(`/api/playlists/${playlistId}/songs/${songId}`, { method: 'DELETE' });
       return jsonOrThrow(res);
     }
+  },
+  // 播放记录
+  play: {
+    async record(songId, title, artist, duration) {
+      const res = await fetch('/api/play/record', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ song_id: songId, title, artist, duration })
+      });
+      return jsonOrThrow(res);
+    }
+  },
+  // 管理员 API
+  admin: {
+    users: {
+      async list() {
+        const res = await fetch('/api/admin/users');
+        return jsonOrThrow(res);
+      },
+      async get(userId) {
+        const res = await fetch(`/api/admin/users/${userId}`);
+        return jsonOrThrow(res);
+      },
+      async delete(userId) {
+        const res = await fetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
+        return jsonOrThrow(res);
+      }
+    },
+    stats: {
+      async overview() {
+        const res = await fetch('/api/admin/stats/overview');
+        return jsonOrThrow(res);
+      },
+      async userStats(userId) {
+        const res = await fetch(`/api/admin/stats/user/${userId}`);
+        return jsonOrThrow(res);
+      },
+      async userHistory(userId, options = {}) {
+        const params = new URLSearchParams();
+        if (options.limit) params.append('limit', options.limit);
+        if (options.offset) params.append('offset', options.offset);
+        const query = params.toString() ? `?${params.toString()}` : '';
+        const res = await fetch(`/api/admin/stats/user/${userId}/history${query}`);
+        return jsonOrThrow(res);
+      },
+      async topSongs(options = {}) {
+        const params = new URLSearchParams();
+        if (options.limit) params.append('limit', options.limit);
+        if (options.period) params.append('period', options.period);
+        const query = params.toString() ? `?${params.toString()}` : '';
+        const res = await fetch(`/api/admin/stats/top-songs${query}`);
+        return jsonOrThrow(res);
+      },
+      async activeUsers(options = {}) {
+        const params = new URLSearchParams();
+        if (options.limit) params.append('limit', options.limit);
+        if (options.period) params.append('period', options.period);
+        const query = params.toString() ? `?${params.toString()}` : '';
+        const res = await fetch(`/api/admin/stats/active-users${query}`);
+        return jsonOrThrow(res);
+      }
+    }
   }
 };

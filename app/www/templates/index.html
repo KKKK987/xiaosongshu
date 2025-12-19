@@ -70,6 +70,7 @@
             </nav>
             <nav>
                 <ul>
+                    {% if is_admin %}<li id="nav-admin"><i class="fas fa-users-cog"></i> <span>用户管理</span></li>{% endif %}
                     {% if is_admin %}<li id="nav-settings"><i class="fas fa-cog"></i> <span>设置</span></li>{% endif %}
                     <li id="nav-logout"><i class="fas fa-sign-out-alt"></i> <span>退出登录</span></li>
                 </ul>
@@ -434,6 +435,66 @@
                     </div>
                 </div>
 
+                <!-- 管理员视图 -->
+                <div id="view-admin" class="hidden">
+                    <div class="admin-page">
+                        <h3><i class="fas fa-users-cog"></i> 用户管理</h3>
+                        
+                        <!-- 统计概览 -->
+                        <div class="settings-section glass-panel">
+                            <h4><i class="fas fa-chart-bar"></i> 统计概览</h4>
+                            <div id="admin-stats-overview" class="stats-grid">
+                                <div class="loading-text" style="padding: 2rem 0; opacity: 0.6;">加载中...</div>
+                            </div>
+                        </div>
+                        
+                        <!-- 用户列表 -->
+                        <div class="settings-section glass-panel">
+                            <h4><i class="fas fa-users"></i> 用户列表</h4>
+                            <div id="admin-users-container" class="admin-users-list">
+                                <div class="loading-text" style="padding: 2rem 0; opacity: 0.6;">加载中...</div>
+                            </div>
+                        </div>
+                        
+                        <!-- 热门歌曲和活跃用户并排 -->
+                        <div class="admin-bottom-row">
+                            <!-- 热门歌曲 -->
+                            <div class="settings-section glass-panel">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                                    <h4 style="margin: 0;"><i class="fas fa-fire"></i> 热门歌曲</h4>
+                                    <select id="admin-top-songs-period" class="admin-select">
+                                        <option value="day">今日</option>
+                                        <option value="week" selected>本周</option>
+                                        <option value="month">本月</option>
+                                        <option value="all">全部</option>
+                                    </select>
+                                </div>
+                                <div id="admin-top-songs" class="top-songs-list">
+                                    <div class="loading-text" style="padding: 2rem 0; opacity: 0.6;">加载中...</div>
+                                </div>
+                            </div>
+                            
+                            <!-- 活跃用户 -->
+                            <div class="settings-section glass-panel">
+                                <h4><i class="fas fa-trophy"></i> 活跃用户排行</h4>
+                                <div id="admin-active-users" class="active-users-list">
+                                    <div class="loading-text" style="padding: 2rem 0; opacity: 0.6;">加载中...</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 用户详情弹窗 -->
+                <div id="admin-user-detail" class="admin-detail-overlay">
+                    <div class="admin-detail-panel glass-panel">
+                        <button id="close-user-detail" class="close-btn"><i class="fas fa-times"></i></button>
+                        <div id="admin-user-detail-content">
+                            <!-- 动态填充 -->
+                        </div>
+                    </div>
+                </div>
+
                 <div id="view-upload" class="hidden">
                     <div class="upload-page glass-panel">
                         <h3>上传音乐</h3>
@@ -668,17 +729,6 @@
             </div>
         </div>
 
-        <!-- 通用确认模态框 -->
-        <div class="overlay" id="confirm-modal-overlay">
-            <div class="modal confirm-box">
-                <h3>提示</h3>
-                <p>确认执行此操作吗？</p>
-                <div class="modal-buttons">
-                    <button id="confirm-no" class="btn-normal">取消</button>
-                    <button id="confirm-yes" class="btn-primary">确定</button>
-                </div>
-            </div>
-        </div>
 
         <div id="toast-container"></div>
         <input type="file" id="file-upload" accept=".mp3,.flac,.wav,.ogg,.m4a" style="display: none;">

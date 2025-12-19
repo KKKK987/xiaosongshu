@@ -4507,3 +4507,532 @@ select:focus {
         margin-right: 0.6rem;
     }
 }
+
+
+/* ============================================
+   管理员页面样式
+   ============================================ */
+
+.admin-page {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding: 1.5rem;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.admin-page h3 {
+    margin-bottom: 0.5rem;
+    font-size: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.admin-page h4 {
+    margin: 0 0 1rem 0;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    opacity: 0.9;
+}
+
+/* 管理页面选择框样式 */
+.admin-select {
+    padding: 0.4rem 0.8rem;
+    border-radius: 0.5rem;
+    background: rgba(255, 255, 255, 0.1);
+    color: inherit;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.admin-select:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.admin-select:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.admin-select option {
+    background: #1a1a2e;
+    color: white;
+    padding: 0.5rem;
+}
+
+/* 统计卡片网格 */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 0.8rem;
+}
+
+@media (max-width: 1200px) {
+    .stats-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media (max-width: 600px) {
+    .stats-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.5rem;
+    }
+}
+
+.stat-card {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 0.8rem;
+    padding: 1rem 0.5rem;
+    text-align: center;
+    transition: transform 0.2s, background 0.2s;
+    min-width: 0;
+}
+
+.stat-card:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-2px);
+}
+
+.stat-card .stat-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--primary);
+    margin-bottom: 0.3rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.stat-card .stat-label {
+    font-size: 0.75rem;
+    opacity: 0.7;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@media (max-width: 600px) {
+    .stat-card {
+        padding: 0.8rem 0.4rem;
+    }
+    
+    .stat-card .stat-value {
+        font-size: 1.2rem;
+    }
+    
+    .stat-card .stat-label {
+        font-size: 0.7rem;
+    }
+}
+
+/* 用户列表容器 */
+.admin-users-list {
+    overflow-x: auto;
+}
+
+/* 用户列表表格 */
+.admin-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    min-width: 600px;
+}
+
+.admin-table th,
+.admin-table td {
+    padding: 0.8rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    white-space: nowrap;
+}
+
+.admin-table th {
+    font-weight: 600;
+    opacity: 0.8;
+    font-size: 0.85rem;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-table tr:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-table td:nth-child(2) {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.role-badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.3rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.role-badge.admin {
+    background: rgba(255, 193, 7, 0.2);
+    color: #ffc107;
+}
+
+.role-badge.user {
+    background: rgba(76, 175, 80, 0.2);
+    color: #4caf50;
+}
+
+/* 热门歌曲和活跃用户双列布局 */
+.admin-bottom-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+    .admin-bottom-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* 热门歌曲列表 */
+.top-songs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.top-song-item {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.6rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 0.5rem;
+    transition: background 0.2s;
+}
+
+.top-song-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.top-song-item .rank {
+    width: 1.8rem;
+    height: 1.8rem;
+    min-width: 1.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+    border-radius: 0.3rem;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.top-song-item .rank.top-1 {
+    background: linear-gradient(135deg, #ffd700, #ffb700);
+    color: #000;
+}
+
+.top-song-item .rank.top-2 {
+    background: linear-gradient(135deg, #c0c0c0, #a0a0a0);
+    color: #000;
+}
+
+.top-song-item .rank.top-3 {
+    background: linear-gradient(135deg, #cd7f32, #b87333);
+    color: #fff;
+}
+
+.top-song-item .song-cover {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    border-radius: 0.3rem;
+    object-fit: cover;
+}
+
+.top-song-item .song-info {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.top-song-item .song-title {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.top-song-item .song-artist {
+    font-size: 0.8rem;
+    opacity: 0.6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.top-song-item .play-count {
+    font-size: 0.85rem;
+    opacity: 0.7;
+    white-space: nowrap;
+    min-width: fit-content;
+}
+
+/* 活跃用户列表 */
+.active-users-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.active-user-item {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.6rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 0.5rem;
+    transition: background 0.2s;
+}
+
+.active-user-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.active-user-item .rank {
+    width: 1.8rem;
+    height: 1.8rem;
+    min-width: 1.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+    border-radius: 0.3rem;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.active-user-item .rank.top-1 {
+    background: linear-gradient(135deg, #ffd700, #ffb700);
+    color: #000;
+}
+
+.active-user-item .rank.top-2 {
+    background: linear-gradient(135deg, #c0c0c0, #a0a0a0);
+    color: #000;
+}
+
+.active-user-item .rank.top-3 {
+    background: linear-gradient(135deg, #cd7f32, #b87333);
+    color: #fff;
+}
+
+.active-user-item .user-info {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.active-user-item .user-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.active-user-item .user-role {
+    font-size: 0.8rem;
+    opacity: 0.6;
+}
+
+.active-user-item .play-count {
+    font-size: 0.85rem;
+    opacity: 0.7;
+    white-space: nowrap;
+    min-width: fit-content;
+}
+
+.active-user-item .play-count {
+    font-size: 0.85rem;
+    opacity: 0.7;
+}
+
+/* 用户详情弹窗 */
+.admin-detail-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 1rem;
+}
+
+.admin-detail-overlay.active {
+    display: flex;
+}
+
+.admin-detail-panel {
+    width: 100%;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 1.5rem;
+    position: relative;
+}
+
+.admin-detail-panel .close-btn {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-size: 1.2rem;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.admin-detail-panel .close-btn:hover {
+    opacity: 1;
+}
+
+.user-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.user-detail-header h3 {
+    margin: 0;
+    font-size: 1.3rem;
+}
+
+.user-stats {
+    display: flex;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.user-stats .stat-item {
+    text-align: center;
+}
+
+.user-stats .stat-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.user-stats .stat-label {
+    font-size: 0.8rem;
+    opacity: 0.7;
+}
+
+/* 播放历史列表 */
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.history-item {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.5rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 0.4rem;
+}
+
+.history-item .history-cover {
+    width: 36px;
+    height: 36px;
+    border-radius: 0.3rem;
+    object-fit: cover;
+}
+
+.history-item .history-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.history-item .history-title {
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.history-item .history-artist {
+    font-size: 0.75rem;
+    opacity: 0.6;
+}
+
+.history-item .history-time {
+    font-size: 0.75rem;
+    opacity: 0.5;
+    white-space: nowrap;
+}
+
+.history-item .history-duration {
+    font-size: 0.75rem;
+    opacity: 0.5;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+    .admin-page {
+        padding: 1rem;
+        gap: 1rem;
+    }
+    
+    /* 移动端admin-page内所有settings-section统一间距 */
+    .admin-page > .settings-section,
+    .admin-page > .admin-bottom-row > .settings-section {
+        margin-bottom: 0;
+    }
+    
+    .admin-bottom-row {
+        display: contents;
+    }
+    
+    .admin-table {
+        font-size: 0.8rem;
+        min-width: 500px;
+    }
+    
+    .admin-table th,
+    .admin-table td {
+        padding: 0.5rem 0.6rem;
+    }
+    
+    .admin-detail-panel {
+        max-height: 90vh;
+    }
+    
+    .top-songs-list,
+    .active-users-grid {
+        max-height: 300px;
+    }
+}

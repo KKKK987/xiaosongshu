@@ -6,6 +6,7 @@ import { initNetease } from './netease.js';
 import { initQQMusic } from './qqmusic.js';
 import { initMounts, loadMountPoints, startScanPolling } from './mounts.js';
 import { initPlayer, loadSongs, performDelete, handleExternalFile, renderPlaylist, switchTab } from './player.js';
+import { initAdmin } from './admin.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
   // UI 适配与基础防护
@@ -248,6 +249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await initPlayer();   // 优先初始化播放器，确保缓存秒开
   await initNetease(loadSongs);
   initQQMusic(loadSongs);  // 初始化 QQ 音乐模块
+  initAdmin();  // 初始化管理员模块
   loadMountPoints();
   startScanPolling(false, (r) => loadSongs(r, false), loadMountPoints);
 });
