@@ -278,6 +278,18 @@ export const api = {
     async removeSong(playlistId, songId) {
       const res = await fetch(`/api/playlists/${playlistId}/songs/${songId}`, { method: 'DELETE' });
       return jsonOrThrow(res);
+    },
+    async createWithSource(name, pendingSongs, sourceUrl, sourceType) {
+      const res = await fetch('/api/playlists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, pending_songs: pendingSongs, source_url: sourceUrl, source_type: sourceType })
+      });
+      return jsonOrThrow(res);
+    },
+    async sync(playlistId) {
+      const res = await fetch(`/api/playlists/${playlistId}/sync`, { method: 'POST' });
+      return jsonOrThrow(res);
     }
   },
   // 播放记录

@@ -176,6 +176,11 @@ function toggleBulkActions(visible) {
   if (ui.neteaseBulkActions) {
     ui.neteaseBulkActions.classList.toggle('hidden', !visible);
   }
+  // 控制"保存为歌单"按钮的显示（仅当解析的是歌单链接时显示）
+  const savePlaylistBtn = document.getElementById('netease-save-playlist');
+  if (savePlaylistBtn) {
+    savePlaylistBtn.classList.toggle('hidden', !visible || !state.neteasePlaylistInfo);
+  }
 }
 
 function formatBytes(bytes) {
@@ -517,6 +522,18 @@ async function searchNeteaseSongs() {
       // Let's not auto select all for links unless it's a playlist. 
       // But the old behavior was auto select. Let's keep empty selection for consistency.
       state.neteaseSelected = new Set();
+      
+      // 保存歌单信息用于后续创建本地歌单
+      if (json.type === 'playlist') {
+        state.neteasePlaylistInfo = {
+          name: json.name || '网易云歌单',
+          url: inputVal,
+          type: 'netease'
+        };
+      } else {
+        state.neteasePlaylistInfo = null;
+      }
+      
       renderNeteaseResults();
 
       const msg = json.type === 'playlist'
@@ -526,6 +543,7 @@ async function searchNeteaseSongs() {
 
     } else {
       // Keyword Search
+      state.neteasePlaylistInfo = null;  // 关键词搜索清除歌单信息
       const json = await api.netease.search(inputVal);
       if (json.success) {
         state.neteaseResults = json.data || [];
@@ -894,7 +912,98 @@ function logoutNetease() {
     });
 }
 
+// 保存为本地歌单（关联源链接，支持同步）并自动下载
+async function saveAsPlaylist() {
+  if (!state.neteasePlaylistInfo) {
+    showToast('当前不是歌单，无法保存');
+    return;
+  }
+  
+  if (!state.neteaseResults || state.neteaseResults.length === 0) {
+    showToast('歌单为空');
+    return;
+  }
+  
+  const playlistInfo = state.neteasePlaylistInfo;
+  const playlistName = playlistInfo.name || '网易云歌单';
+  
+  // 找出本地没有的歌曲
+  const missingSongs = state.neteaseResults.filter(song => 
+    !state.fullPlaylist || !state.fullPlaylist.some(local => isSameSong(local, song))
+  );
+  
+  // 准备待下载歌曲列表
+  const pendingSongs = state.neteaseResults.map((song, idx) => ({
+    netease_id: String(song.id),
+    title: song.title || '未知歌曲',
+    artist: song.artist || '',
+    album: song.album || '',
+    cover: song.cover || '',
+    source: 'netease',
+    sort_order: idx
+  }));
+  
+  try {
+    const res = await api.playlists.createWithSource(
+      playlistName,
+      pendingSongs,
+      playlistInfo.url,
+      playlistInfo.type
+    );
+    
+    if (res.success) {
+      // 自动开始下载本地没有的歌曲
+      if (missingSongs.length > 0) {
+        showToast(`已保存歌单"${playlistName}"，开始下载 ${missingSongs.length} 首歌曲...`);
+        startNeteaseBulkDownload(missingSongs);
+      } else {
+        showToast(`已保存歌单"${playlistName}"（所有歌曲本地已有）`);
+      }
+    } else {
+      showToast(res.error || '保存失败');
+    }
+  } catch (err) {
+    console.error('Save playlist error:', err);
+    showToast('保存歌单失败');
+  }
+}
 
+// 批量下载歌曲
+function startNeteaseBulkDownload(songs) {
+  if (!songs || songs.length === 0) return;
+  
+  // 过滤掉VIP歌曲（如果用户不是VIP）
+  const targets = songs.filter(s => canDownloadSong(s));
+  
+  if (targets.length === 0) {
+    showToast('所有歌曲都是 VIP 专享，请先登录');
+    return;
+  }
+  
+  // 添加到下载队列
+  for (const song of targets) {
+    const existingTask = state.neteaseDownloadTasks.find(t => String(t.songId) === String(song.id)
+      && ['preparing', 'downloading', 'pending', 'queued'].includes(t.status));
+    if (existingTask) continue;
+
+    const limit = state.neteaseMaxConcurrent || 20;
+    const active = getActiveDownloadCount();
+    const payload = { ...song, level: 'exhigh' };
+
+    if (active < limit) {
+      const taskId = addDownloadTask(song, 'pending');
+      startNeteaseDownload({ taskId, song: payload, btnEl: null });
+    } else {
+      const taskId = addDownloadTask(song, 'queued');
+      state.neteasePendingQueue.push({ taskId, song: payload, btnEl: null });
+    }
+  }
+  
+  // 打开下载面板
+  if (ui.neteaseDownloadPanel) {
+    ui.neteaseDownloadPanel.classList.remove('hidden');
+  }
+}
 
 function bindEvents() {
   ui.neteaseSearchBtn?.addEventListener('click', searchNeteaseSongs);
@@ -919,6 +1028,13 @@ function bindEvents() {
     renderNeteaseResults();
   });
   ui.neteaseBulkDownloadBtn?.addEventListener('click', bulkDownloadSelected);
+  
+  // 保存为歌单按钮
+  const savePlaylistBtn = document.getElementById('netease-save-playlist');
+  if (savePlaylistBtn) {
+    savePlaylistBtn.addEventListener('click', saveAsPlaylist);
+  }
+  
   ui.neteaseDownloadToggle && ui.neteaseDownloadPanel && ui.neteaseDownloadToggle.addEventListener('click', () => {
     ui.neteaseDownloadPanel.classList.add('hidden');
   });

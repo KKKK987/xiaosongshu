@@ -1138,14 +1138,16 @@ function renderPlaylists(playlists, expandedIds = []) {
     
     const item = document.createElement('div');
     item.className = 'playlist-list-item';
+    const hasSyncSource = pl.source_url && pl.source_type;
     item.innerHTML = `
       <i class="fas fa-chevron-right playlist-expand-icon"></i>
       <img src="${pl.cover}" loading="lazy">
       <div class="playlist-info">
-        <div class="playlist-name" title="${pl.name}">${pl.name}</div>
+        <div class="playlist-name" title="${pl.name}">${pl.name}${hasSyncSource ? `<span class="sync-badge" title="可同步 (${pl.source_type === 'qq' ? 'QQ音乐' : '网易云'})"><i class="fas fa-link"></i></span>` : ''}</div>
         <div class="playlist-count">${pl.song_count} 首歌曲</div>
       </div>
       <div class="playlist-actions">
+        ${hasSyncSource ? `<button class="btn-sync" title="同步歌单"><i class="fas fa-sync-alt"></i></button>` : ''}
         <button class="btn-play-all" title="播放全部"><i class="fas fa-play"></i></button>
         <button class="btn-rename" title="重命名"><i class="fas fa-edit"></i></button>
         <button class="btn-delete" title="删除"><i class="fas fa-trash"></i></button>
@@ -1193,6 +1195,34 @@ function renderPlaylists(playlists, expandedIds = []) {
       e.stopPropagation();
       deletePlaylist(pl.id, pl.name);
     });
+    
+    // 同步按钮事件
+    const syncBtn = item.querySelector('.btn-sync');
+    if (syncBtn) {
+      syncBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        syncBtn.disabled = true;
+        syncBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        try {
+          const res = await api.playlists.sync(pl.id);
+          if (res.success) {
+            showToast(res.message || '同步完成');
+            // 如果有新歌曲，刷新歌单
+            if (res.added_count > 0) {
+              loadPlaylists();
+            }
+          } else {
+            showToast(res.error || '同步失败');
+          }
+        } catch (err) {
+          console.error('Sync playlist error:', err);
+          showToast('同步失败');
+        } finally {
+          syncBtn.disabled = false;
+          syncBtn.innerHTML = '<i class="fas fa-sync-alt"></i>';
+        }
+      });
+    }
     
     wrapper.appendChild(item);
     wrapper.appendChild(songsArea);

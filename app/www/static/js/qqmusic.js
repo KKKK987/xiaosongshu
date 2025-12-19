@@ -7,6 +7,15 @@ import { showToast, formatTime } from './utils.js';
 // QQ 音乐业务模块
 let songRefreshCallback = null;
 
+// 下载完成后处理歌单状态（后端会自动转换待下载歌曲，这里只是占位）
+async function addDownloadedSongToPlaylist(song, failed = false) {
+  // 后端在获取歌单歌曲时会自动检测并转换待下载歌曲
+  // 这里不需要额外操作，loadPlaylists() 会在下载成功后被调用
+  if (!failed) {
+    console.log(`[QQ音乐] 歌曲下载完成: ${song.title}`);
+  }
+}
+
 // 初始化 QQ 音乐登录状态
 if (!state.qqmusicLoggedIn) state.qqmusicLoggedIn = false;
 if (!state.qqmusicUser) state.qqmusicUser = null;
@@ -436,6 +445,11 @@ function toggleQQBulkActions(visible) {
   if (ui.qqmusicBulkActions) {
     ui.qqmusicBulkActions.classList.toggle('hidden', !visible);
   }
+  // 控制"保存为歌单"按钮的显示（仅当解析的是歌单链接时显示）
+  const savePlaylistBtn = document.getElementById('qqmusic-save-playlist');
+  if (savePlaylistBtn) {
+    savePlaylistBtn.classList.toggle('hidden', !visible || !state.qqmusicPlaylistInfo);
+  }
 }
 
 function renderQQMusicResults() {
@@ -834,11 +848,22 @@ async function searchQQMusic() {
       state.qqmusicResults = json.songs || json.data || [];
       state.qqmusicResultSource = 'search';
       state.qqmusicSelected = new Set();
+      
+      // 保存歌单信息用于后续创建本地歌单
+      if (isPlaylistUrl && json.playlist_name) {
+        state.qqmusicPlaylistInfo = {
+          name: json.playlist_name || 'QQ音乐歌单',
+          url: inputVal,
+          type: 'qq'
+        };
+      } else {
+        state.qqmusicPlaylistInfo = null;
+      }
+      
       renderQQMusicResults();
       
       if (isPlaylistUrl && json.playlist_name) {
-        // 解析歌单成功，处理导入逻辑
-        await handleQQPlaylistImport(json.playlist_name, state.qqmusicResults);
+        showToast(`已解析歌单：${json.playlist_name}（${state.qqmusicResults.length} 首）`);
       }
     } else {
       ui.qqmusicResultList.innerHTML = `<div class="loading-text">${json.error || '搜索失败'}</div>`;
@@ -848,408 +873,6 @@ async function searchQQMusic() {
     console.error('QQ Music search failed', err);
     if (ui.qqmusicResultList) ui.qqmusicResultList.innerHTML = '<div class="loading-text">搜索失败，请检查 API 服务</div>';
     toggleQQBulkActions(false);
-  }
-}
-
-// 处理QQ音乐歌单导入
-async function handleQQPlaylistImport(playlistName, songs) {
-  if (!songs || songs.length === 0) {
-    showToast(`歌单 "${playlistName}" 为空`);
-    return;
-  }
-  
-  // 统计本地已有和未有的歌曲
-  const localSongs = [];
-  const missingSongs = [];
-  
-  songs.forEach(song => {
-    const isLocal = state.fullPlaylist && state.fullPlaylist.some(local => isSameSong(local, song));
-    if (isLocal) {
-      localSongs.push(song);
-    } else {
-      missingSongs.push(song);
-    }
-  });
-  
-  // 显示导入确认弹窗
-  showQQPlaylistImportDialog(playlistName, songs, localSongs, missingSongs);
-}
-
-// 显示QQ歌单导入确认弹窗
-function showQQPlaylistImportDialog(playlistName, allSongs, localSongs, missingSongs) {
-  // 创建弹窗
-  const overlay = document.createElement('div');
-  overlay.className = 'custom-overlay centered active';
-  overlay.id = 'qq-playlist-import-modal';
-  
-  const localCount = localSongs.length;
-  const missingCount = missingSongs.length;
-  const totalCount = allSongs.length;
-  
-  overlay.innerHTML = `
-    <div class="qr-box glass-panel" style="min-width: 350px; max-width: 450px;">
-      <h3 style="margin-bottom: 1rem;"><i class="fab fa-qq"></i> 导入歌单</h3>
-      <div style="margin-bottom: 1rem;">
-        <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem;">${playlistName}</div>
-        <div style="font-size: 0.9rem; color: var(--text-sub);">
-          共 ${totalCount} 首歌曲
-        </div>
-      </div>
-      <div style="background: rgba(255,255,255,0.05); border-radius: 0.5rem; padding: 1rem; margin-bottom: 1rem;">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-          <span>本地已有:</span>
-          <span style="color: #4ade80;">${localCount} 首</span>
-        </div>
-        <div style="display: flex; justify-content: space-between;">
-          <span>本地缺少:</span>
-          <span style="color: #f87171;">${missingCount} 首</span>
-        </div>
-      </div>
-      <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-        <button id="qq-import-create-only" class="btn-normal" style="width: 100%; padding: 0.8rem;">
-          <i class="fas fa-folder-plus"></i> 仅创建歌单
-        </button>
-        ${missingCount > 0 ? `
-        <button id="qq-import-create-and-download" class="btn-primary" style="width: 100%; padding: 0.8rem; background: linear-gradient(135deg, var(--primary), #10b981);">
-          <i class="fas fa-download"></i> 创建歌单并下载缺少的歌曲
-        </button>
-        ` : ''}
-        <button id="qq-import-cancel" class="btn-normal" style="width: 100%; padding: 0.6rem; opacity: 0.7;">
-          取消
-        </button>
-      </div>
-    </div>
-  `;
-  
-  document.body.appendChild(overlay);
-  
-  // 绑定事件
-  overlay.querySelector('#qq-import-cancel').addEventListener('click', () => {
-    overlay.remove();
-  });
-  
-  // 仅创建歌单（添加所有歌曲，包括本地没有的作为待下载状态）
-  overlay.querySelector('#qq-import-create-only').addEventListener('click', async () => {
-    overlay.remove();
-    await createLocalPlaylistFromQQWithPending(playlistName, allSongs, localSongs, missingSongs);
-  });
-  
-  // 创建歌单并下载缺少的歌曲
-  const createAndDownloadBtn = overlay.querySelector('#qq-import-create-and-download');
-  if (createAndDownloadBtn) {
-    createAndDownloadBtn.addEventListener('click', async () => {
-      overlay.remove();
-      // 创建歌单（添加所有歌曲信息，包括本地已有的）
-      const newPlaylist = await createLocalPlaylistFromQQWithAllSongs(playlistName, allSongs, localSongs);
-      if (newPlaylist) {
-        // 保存歌单ID，下载完成后自动添加
-        state.pendingPlaylistForDownload = {
-          playlistId: newPlaylist.id,
-          playlistName: playlistName,
-          missingSongs: [...missingSongs]
-        };
-        showToast(`已创建歌单 "${playlistName}"，开始下载 ${missingCount} 首缺少的歌曲`);
-      }
-      downloadMissingSongs(missingSongs);
-    });
-  }
-  
-  // 点击背景关闭
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) overlay.remove();
-  });
-}
-
-// 从QQ歌单创建本地歌单（包含待下载歌曲）
-async function createLocalPlaylistFromQQWithPending(playlistName, allSongs, localSongs, missingSongs) {
-  try {
-    // 为所有歌曲计算原始顺序索引
-    const songOrderMap = new Map();
-    allSongs.forEach((song, idx) => {
-      songOrderMap.set(song.mid, idx);
-    });
-    
-    // 创建歌单，同时保存待下载歌曲的元信息（包含原始顺序）
-    const createRes = await fetch('/api/playlists', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        name: playlistName,
-        // 保存待下载歌曲的元信息（包含原始顺序）
-        pending_songs: missingSongs.map(s => ({
-          mid: s.mid,
-          title: s.title,
-          artist: s.artist,
-          album: s.album,
-          cover: s.cover,
-          source: 'qq',
-          sort_order: songOrderMap.get(s.mid) ?? 9999
-        }))
-      })
-    });
-    const createJson = await createRes.json();
-    
-    if (!createJson.success) {
-      showToast(createJson.error || '创建歌单失败');
-      return null;
-    }
-    
-    const playlistId = createJson.playlist.id;
-    
-    // 添加本地已有的歌曲到歌单（包含原始顺序）
-    let addedCount = 0;
-    for (const song of localSongs) {
-      const localSong = state.fullPlaylist.find(local => isSameSong(local, song));
-      if (localSong && localSong.id) {
-        try {
-          const sortOrder = songOrderMap.get(song.mid) ?? 9999;
-          const addRes = await fetch(`/api/playlists/${playlistId}/songs`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ song_id: localSong.id, sort_order: sortOrder })
-          });
-          const addJson = await addRes.json();
-          if (addJson.success) addedCount++;
-        } catch (e) {
-          console.error('Add song to playlist error:', e);
-        }
-      }
-    }
-    
-    const pendingCount = missingSongs.length;
-    if (pendingCount > 0) {
-      showToast(`已创建歌单 "${playlistName}"，添加了 ${addedCount} 首本地歌曲，${pendingCount} 首待下载`);
-    } else {
-      showToast(`已创建歌单 "${playlistName}"，添加了 ${addedCount} 首歌曲`);
-    }
-    
-    // 刷新歌单列表
-    loadPlaylists();
-    
-    return createJson.playlist;
-  } catch (e) {
-    console.error('Create playlist from QQ error:', e);
-    showToast('创建歌单失败');
-    return null;
-  }
-}
-
-// 从QQ歌单创建本地歌单（仅本地已有的歌曲）
-async function createLocalPlaylistFromQQ(playlistName, songs, silent = false) {
-  try {
-    // 创建歌单
-    const createRes = await fetch('/api/playlists', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: playlistName })
-    });
-    const createJson = await createRes.json();
-    
-    if (!createJson.success) {
-      showToast(createJson.error || '创建歌单失败');
-      return null;
-    }
-    
-    const playlistId = createJson.playlist.id;
-    
-    // 添加本地已有的歌曲到歌单
-    let addedCount = 0;
-    for (const song of songs) {
-      // 找到本地对应的歌曲
-      const localSong = state.fullPlaylist.find(local => isSameSong(local, song));
-      if (localSong && localSong.id) {
-        try {
-          const addRes = await fetch(`/api/playlists/${playlistId}/songs`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ song_id: localSong.id })
-          });
-          const addJson = await addRes.json();
-          if (addJson.success) addedCount++;
-        } catch (e) {
-          console.error('Add song to playlist error:', e);
-        }
-      }
-    }
-    
-    if (!silent) {
-      showToast(`已创建歌单 "${playlistName}"，添加了 ${addedCount} 首歌曲`);
-    }
-    
-    return createJson.playlist;
-  } catch (e) {
-    console.error('Create playlist from QQ error:', e);
-    showToast('创建歌单失败');
-    return null;
-  }
-}
-
-// 从QQ歌单创建本地歌单（包含所有歌曲信息，用于下载模式）
-async function createLocalPlaylistFromQQWithAllSongs(playlistName, allSongs, localSongs) {
-  try {
-    // 找出本地没有的歌曲（待下载）
-    const missingSongs = allSongs.filter(song => 
-      !localSongs.some(local => local.mid === song.mid)
-    );
-    
-    // 创建歌单，同时保存待下载歌曲的元信息
-    const createRes = await fetch('/api/playlists', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        name: playlistName,
-        // 保存待下载歌曲的元信息
-        pending_songs: missingSongs.map(s => ({
-          mid: s.mid,
-          title: s.title,
-          artist: s.artist,
-          album: s.album,
-          cover: s.cover,
-          source: 'qq'
-        }))
-      })
-    });
-    const createJson = await createRes.json();
-    
-    if (!createJson.success) {
-      showToast(createJson.error || '创建歌单失败');
-      return null;
-    }
-    
-    const playlistId = createJson.playlist.id;
-    
-    // 添加本地已有的歌曲到歌单
-    let addedCount = 0;
-    for (const song of localSongs) {
-      const localSong = state.fullPlaylist.find(local => isSameSong(local, song));
-      if (localSong && localSong.id) {
-        try {
-          const addRes = await fetch(`/api/playlists/${playlistId}/songs`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ song_id: localSong.id })
-          });
-          const addJson = await addRes.json();
-          if (addJson.success) addedCount++;
-        } catch (e) {
-          console.error('Add song to playlist error:', e);
-        }
-      }
-    }
-    
-    console.log(`[QQ音乐] 歌单 "${playlistName}" 已创建，添加了 ${addedCount} 首本地歌曲，待下载 ${missingSongs.length} 首`);
-    
-    return createJson.playlist;
-  } catch (e) {
-    console.error('Create playlist from QQ error:', e);
-    showToast('创建歌单失败');
-    return null;
-  }
-}
-
-// 下载缺少的歌曲
-function downloadMissingSongs(songs) {
-  if (!songs || songs.length === 0) return;
-  
-  // 已登录用户可以下载 VIP 歌曲
-  const canDownloadVip = state.qqmusicLoggedIn;
-  const targets = songs.filter(s => canDownloadVip || !s.is_vip);
-  
-  if (targets.length === 0) {
-    showToast('所有缺少的歌曲都是 VIP 专享，请先登录');
-    return;
-  }
-  
-  // 先将所有任务添加到队列
-  for (const song of targets) {
-    const existingTask = state.qqmusicDownloadTasks.find(t => t.songMid === song.mid
-      && ['preparing', 'downloading', 'pending', 'queued'].includes(t.status));
-    if (existingTask) continue;
-
-    const taskId = addQQDownloadTask(song, 'queued');
-    state.qqmusicPendingQueue.push({ taskId, song, btnEl: null });
-  }
-  
-  // 然后统一处理队列
-  processQQDownloadQueue();
-  
-  const skipped = songs.length - targets.length;
-  let msg = `已添加 ${targets.length} 首歌曲到下载队列`;
-  if (skipped > 0) {
-    msg += `，跳过 ${skipped} 首 VIP 歌曲`;
-  }
-  showToast(msg);
-  
-  // 打开下载面板
-  if (ui.qqmusicDownloadPanel) {
-    ui.qqmusicDownloadPanel.classList.remove('hidden');
-  }
-}
-
-// 下载完成后将歌曲添加到待处理的歌单
-async function addDownloadedSongToPlaylist(song, downloadFailed = false) {
-  if (!state.pendingPlaylistForDownload) return;
-  
-  const { playlistId, missingSongs, playlistName } = state.pendingPlaylistForDownload;
-  
-  // 初始化统计计数器
-  if (!state.pendingPlaylistForDownload.stats) {
-    state.pendingPlaylistForDownload.stats = { added: 0, failed: 0 };
-  }
-  
-  // 检查这首歌是否在待添加列表中
-  const isMissingSong = missingSongs.some(s => s.mid === song.mid);
-  if (!isMissingSong) return;
-  
-  if (!downloadFailed) {
-    // 刷新本地库后查找新下载的歌曲
-    await new Promise(resolve => setTimeout(resolve, 500)); // 等待索引完成
-    
-    const localSong = state.fullPlaylist.find(local => isSameSong(local, song));
-    if (localSong && localSong.id) {
-      try {
-        const addRes = await fetch(`/api/playlists/${playlistId}/songs`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ song_id: localSong.id })
-        });
-        const addJson = await addRes.json();
-        if (addJson.success) {
-          console.log(`[QQ音乐] 已将 ${song.title} 添加到歌单`);
-          state.pendingPlaylistForDownload.stats.added++;
-        }
-      } catch (e) {
-        console.error('Add downloaded song to playlist error:', e);
-        state.pendingPlaylistForDownload.stats.failed++;
-      }
-    } else {
-      // 下载成功但找不到本地文件
-      console.warn(`[QQ音乐] 下载成功但未找到本地文件: ${song.title}`);
-      state.pendingPlaylistForDownload.stats.failed++;
-    }
-  } else {
-    // 下载失败
-    console.warn(`[QQ音乐] 下载失败，无法添加到歌单: ${song.title}`);
-    state.pendingPlaylistForDownload.stats.failed++;
-  }
-  
-  // 从待添加列表中移除
-  const idx = missingSongs.findIndex(s => s.mid === song.mid);
-  if (idx !== -1) {
-    missingSongs.splice(idx, 1);
-  }
-  
-  // 如果所有歌曲都已处理完，清除待处理状态并显示统计
-  if (missingSongs.length === 0) {
-    const { added, failed } = state.pendingPlaylistForDownload.stats;
-    if (failed > 0) {
-      showToast(`歌单 "${playlistName}" 导入完成：成功 ${added} 首，失败 ${failed} 首`);
-    } else {
-      showToast(`歌单 "${playlistName}" 已完成导入，添加了 ${added} 首歌曲`);
-    }
-    state.pendingPlaylistForDownload = null;
-    // 刷新歌单列表
-    loadPlaylists();
   }
 }
 
@@ -1346,6 +969,97 @@ function toggleQQMusicGate(connected) {
   }
 }
 
+// 保存为本地歌单（关联源链接，支持同步）并自动下载
+async function saveQQAsPlaylist() {
+  if (!state.qqmusicPlaylistInfo) {
+    showToast('当前不是歌单，无法保存');
+    return;
+  }
+  
+  if (!state.qqmusicResults || state.qqmusicResults.length === 0) {
+    showToast('歌单为空');
+    return;
+  }
+  
+  const playlistInfo = state.qqmusicPlaylistInfo;
+  const playlistName = playlistInfo.name || 'QQ音乐歌单';
+  
+  // 找出本地没有的歌曲
+  const missingSongs = state.qqmusicResults.filter(song => 
+    !state.fullPlaylist || !state.fullPlaylist.some(local => isSameSong(local, song))
+  );
+  
+  // 准备待下载歌曲列表
+  const pendingSongs = state.qqmusicResults.map((song, idx) => ({
+    qq_mid: song.mid,
+    title: song.title || song.name || '未知歌曲',
+    artist: song.artist || (song.singer && song.singer.map(s => s.name).join(', ')) || '',
+    album: song.album || (song.albumInfo && song.albumInfo.name) || '',
+    cover: song.cover || (song.albumInfo && song.albumInfo.mid ? `https://y.qq.com/music/photo_new/T002R300x300M000${song.albumInfo.mid}.jpg` : ''),
+    source: 'qq',
+    sort_order: idx
+  }));
+  
+  try {
+    const res = await api.playlists.createWithSource(
+      playlistName,
+      pendingSongs,
+      playlistInfo.url,
+      playlistInfo.type
+    );
+    
+    if (res.success) {
+      // 刷新歌单列表
+      loadPlaylists();
+      
+      // 自动开始下载本地没有的歌曲
+      if (missingSongs.length > 0) {
+        showToast(`已保存歌单"${playlistName}"，开始下载 ${missingSongs.length} 首歌曲...`);
+        startBulkDownload(missingSongs);
+      } else {
+        showToast(`已保存歌单"${playlistName}"（所有歌曲本地已有）`);
+      }
+    } else {
+      showToast(res.error || '保存失败');
+    }
+  } catch (err) {
+    console.error('Save playlist error:', err);
+    showToast('保存歌单失败');
+  }
+}
+
+// 批量下载歌曲
+function startBulkDownload(songs) {
+  if (!songs || songs.length === 0) return;
+  
+  // 已登录用户可以下载 VIP 歌曲
+  const canDownloadVip = state.qqmusicLoggedIn;
+  const targets = songs.filter(s => canDownloadVip || !s.is_vip);
+  
+  if (targets.length === 0) {
+    showToast('所有歌曲都是 VIP 专享，请先登录');
+    return;
+  }
+  
+  // 添加到下载队列
+  for (const song of targets) {
+    const existingTask = state.qqmusicDownloadTasks.find(t => t.songMid === song.mid
+      && ['preparing', 'downloading', 'pending', 'queued'].includes(t.status));
+    if (existingTask) continue;
+
+    const taskId = addQQDownloadTask(song, 'queued');
+    state.qqmusicPendingQueue.push({ taskId, song, btnEl: null });
+  }
+  
+  // 处理队列
+  processQQDownloadQueue();
+  
+  // 打开下载面板
+  if (ui.qqmusicDownloadPanel) {
+    ui.qqmusicDownloadPanel.classList.remove('hidden');
+  }
+}
+
 export function initQQMusic(refreshCallback) {
   songRefreshCallback = refreshCallback;
 
@@ -1371,6 +1085,12 @@ export function initQQMusic(refreshCallback) {
   // 批量下载
   if (ui.qqmusicBulkDownload) {
     ui.qqmusicBulkDownload.addEventListener('click', bulkDownloadQQSelected);
+  }
+  
+  // 保存为歌单按钮
+  const savePlaylistBtn = document.getElementById('qqmusic-save-playlist');
+  if (savePlaylistBtn) {
+    savePlaylistBtn.addEventListener('click', saveQQAsPlaylist);
   }
 
   // 下载面板切换

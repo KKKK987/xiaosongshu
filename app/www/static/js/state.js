@@ -18,6 +18,7 @@ export const state = {
   neteaseResults: [],
   neteaseRecommendations: [],
   neteaseResultSource: 'recommend',
+  neteasePlaylistInfo: null,  // 当前解析的歌单信息 {name, url, type}
   neteasePollingTimer: null,
   currentLoginKey: null,
   neteaseDownloadDir: '',
@@ -37,6 +38,7 @@ export const state = {
   qqmusicResults: [],
   qqmusicRecommendations: [],
   qqmusicResultSource: 'recommend',  // 'recommend' 或 'search'
+  qqmusicPlaylistInfo: null,  // 当前解析的歌单信息 {name, url, type}
   qqmusicSelected: new Set(),
   qqmusicDownloadTasks: [],
   qqmusicPendingQueue: [],

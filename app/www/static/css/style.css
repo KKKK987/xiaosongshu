@@ -817,6 +817,16 @@ body::before {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.playlist-list-item .playlist-name .sync-badge {
+    font-size: 0.7rem;
+    color: var(--primary);
+    opacity: 0.8;
+    flex-shrink: 0;
 }
 
 .playlist-list-item .playlist-count {
@@ -852,6 +862,16 @@ body::before {
 
 .playlist-list-item .playlist-actions button:hover {
     background: var(--primary);
+    color: white;
+}
+
+.playlist-list-item .playlist-actions .btn-sync {
+    background: rgba(39, 174, 96, 0.2);
+    color: #27ae60;
+}
+
+.playlist-list-item .playlist-actions .btn-sync:hover {
+    background: #27ae60;
     color: white;
 }
 
@@ -3924,6 +3944,15 @@ select:focus {
     background: #9c88ff;
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(140, 122, 230, 0.3);
+}
+
+.netease-bulk-actions .btn-save-playlist {
+    background: #27ae60;
+}
+
+.netease-bulk-actions .btn-save-playlist:hover {
+    background: #2ecc71;
+    box-shadow: 0 4px 12px rgba(39, 174, 96, 0.3);
 }
 
 .netease-check {

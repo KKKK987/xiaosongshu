@@ -573,6 +573,17 @@ def init_db():
                 conn.execute("ALTER TABLE playlists ADD COLUMN user_hash TEXT DEFAULT ''")
             except: pass
             
+            # 迁移：为歌单添加源链接字段（用于同步）
+            try:
+                conn.execute("ALTER TABLE playlists ADD COLUMN source_url TEXT")
+            except: pass
+            try:
+                conn.execute("ALTER TABLE playlists ADD COLUMN source_type TEXT")
+            except: pass
+            try:
+                conn.execute("ALTER TABLE playlists ADD COLUMN last_synced_at REAL")
+            except: pass
+            
             # 歌单歌曲关联表
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS playlist_songs (
@@ -4182,27 +4193,56 @@ def call_qqmusic_api(category: str, method: str, params: dict = None) -> dict:
                 if not playlist_id:
                     return {'code': 400, 'message': '缺少歌单ID'}
                 
-                result = _call_qqmusic_api_direct(
-                    'music.srfDissInfo.DissInfo',
-                    'CgiGetDiss',
-                    {
-                        'disstid': int(playlist_id),
-                        'song_begin': 0,
-                        'song_num': 500,
-                        'onlysonglist': 0,
-                        'orderlist': 1
-                    }
-                )
+                # 分页获取所有歌曲（每次最多500首）
+                all_songs = []
+                song_begin = 0
+                page_size = 500
+                dissname = ''
                 
-                data = result.get('data', result)
-                dirinfo = data.get('dirinfo', {})
-                songlist = data.get('songlist', [])
+                while True:
+                    result = _call_qqmusic_api_direct(
+                        'music.srfDissInfo.DissInfo',
+                        'CgiGetDiss',
+                        {
+                            'disstid': int(playlist_id),
+                            'song_begin': song_begin,
+                            'song_num': page_size,
+                            'onlysonglist': 0 if song_begin == 0 else 1,  # 第一次获取歌单信息
+                            'orderlist': 1
+                        }
+                    )
+                    
+                    data = result.get('data', result)
+                    
+                    # 第一次获取歌单名称
+                    if song_begin == 0:
+                        dirinfo = data.get('dirinfo', {})
+                        dissname = dirinfo.get('title', '')
+                    
+                    songlist = data.get('songlist', [])
+                    if not songlist:
+                        break
+                    
+                    all_songs.extend(songlist)
+                    
+                    # 如果返回的歌曲数量少于请求的数量，说明已经获取完毕
+                    if len(songlist) < page_size:
+                        break
+                    
+                    song_begin += page_size
+                    
+                    # 安全限制：最多获取3000首
+                    if song_begin >= 3000:
+                        logger.warning(f'歌单 {playlist_id} 歌曲数量超过3000首，停止获取')
+                        break
+                
+                logger.info(f'获取歌单 {playlist_id} 完成，共 {len(all_songs)} 首歌曲')
                 
                 return {
                     'code': 200,
                     'data': {
-                        'dissname': dirinfo.get('title', ''),
-                        'songlist': songlist
+                        'dissname': dissname,
+                        'songlist': all_songs
                     }
                 }
         
@@ -4919,7 +4959,7 @@ def get_qqmusic_task_status(task_id):
 
 @app.route('/api/qqmusic/playlist/parse', methods=['POST'])
 def parse_qqmusic_playlist():
-    """解析 QQ 音乐歌单链接，返回歌曲列表"""
+    """解析 QQ 音乐歌单链接，返回歌曲列表（支持分页获取全部歌曲）"""
     data = request.get_json() or {}
     url = data.get('url', '').strip()
     
@@ -4928,11 +4968,24 @@ def parse_qqmusic_playlist():
     
     try:
         # 从URL中提取歌单ID - 支持多种格式
+        logger.info(f'解析QQ音乐歌单链接: {url}')
+        
+        # 如果是短链接，先解析获取真实URL
+        if 'fcgi-bin/u' in url or 'c.y.qq.com' in url or 'c6.y.qq.com' in url:
+            try:
+                logger.info(f'检测到QQ音乐短链接，尝试重定向解析: {url}')
+                resp = requests.get(url, allow_redirects=True, timeout=10, headers=COMMON_HEADERS)
+                real_url = resp.url
+                logger.info(f'短链接重定向到: {real_url}')
+                # 使用重定向后的URL继续解析
+                url = real_url
+            except Exception as e:
+                logger.warning(f'解析QQ音乐短链接失败: {e}')
+        
         id_match = (
             re.search(r'id=(\d+)', url) or 
             re.search(r'/playlist/(\d+)', url) or
-            re.search(r'fcgi-bin/u\?__=([^&]+)', url) or
-            re.search(r'/(\d{8,})/?$', url) or  # 至少8位数字
+            re.search(r'/(\d{8,})(?:/|$|\?)', url) or
             re.search(r'disstid[=:](\d+)', url)
         )
         
@@ -4942,8 +4995,8 @@ def parse_qqmusic_playlist():
         playlist_id = id_match.group(1)
         logger.info(f'提取到QQ音乐歌单ID: {playlist_id}')
         
-        # 如果是短链接，先解析获取真实ID
-        if 'fcgi-bin' in url or len(playlist_id) < 8:
+        # 如果ID太短，可能还需要进一步解析
+        if len(playlist_id) < 8:
             try:
                 resp = requests.get(url, allow_redirects=True, timeout=10, headers=COMMON_HEADERS)
                 real_url = resp.url
@@ -4954,80 +5007,29 @@ def parse_qqmusic_playlist():
             except Exception as e:
                 logger.warning(f'解析QQ音乐短链接失败: {e}')
         
-        # 构造QQ音乐API请求
-        api_url = "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg"
-        params = {
-            'type': 1,
-            'json': 1,
-            'utf8': 1,
-            'onlysong': 0,
-            'disstid': playlist_id,
-            'format': 'json',
-            'g_tk': 5381,
-            'loginUin': 0,
-            'hostUin': 0,
-            'inCharset': 'utf8',
-            'outCharset': 'utf-8',
-            'notice': 0,
-            'platform': 'yqq.json',
-            'needNewCode': 0
-        }
+        # 使用内部API分页获取全部歌曲
+        resp = call_qqmusic_api('playlist', 'get_playlist_detail', {'id': playlist_id})
         
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://y.qq.com/',
-            'Origin': 'https://y.qq.com'
-        }
-        
-        resp = requests.get(api_url, params=params, headers=headers, timeout=15)
-        text = resp.text
-        
-        # QQ音乐返回的可能是JSONP格式，需要处理
-        if text.startswith('callback(') and text.endswith(')'):
-            text = text[9:-1]
-        elif 'callback(' in text and text.endswith(')'):
-            start = text.find('(') + 1
-            text = text[start:-1]
-        
-        data = json_module.loads(text)
-        
-        if data.get('code') == 0 and data.get('cdlist') and len(data.get('cdlist', [])) > 0:
-            playlist = data['cdlist'][0]
-            songs = playlist.get('songlist', [])
+        if resp.get('code') == 200:
+            data = resp.get('data', {})
+            songs = data.get('songlist', [])
+            playlist_name = data.get('dissname', '未知歌单')
             
             # 格式化歌曲列表
-            formatted_songs = []
-            for song in songs:
-                # 处理歌手信息
-                singers = song.get('singer', [])
-                artist = ', '.join([s.get('name', '') for s in singers if s.get('name')]) if singers else '未知歌手'
-                
-                # 获取封面
-                album_mid = song.get('albummid', '')
-                cover = f"https://y.qq.com/music/photo_new/T002R300x300M000{album_mid}.jpg" if album_mid else ''
-                
-                formatted_songs.append({
-                    'id': song.get('songid', ''),
-                    'mid': song.get('songmid', ''),
-                    'title': song.get('songname', ''),
-                    'artist': artist,
-                    'album': song.get('albumname', ''),
-                    'album_mid': album_mid,
-                    'cover': cover,
-                    'duration': song.get('interval', 0),
-                    'is_vip': song.get('pay', {}).get('pay_play', 0) == 1
-                })
+            formatted_songs = _format_qqmusic_songs(songs)
+            
+            logger.info(f'解析QQ音乐歌单成功: {playlist_name}, 共 {len(formatted_songs)} 首歌曲')
             
             return jsonify({
                 'success': True,
-                'playlist_name': playlist.get('dissname', '未知歌单'),
+                'playlist_name': playlist_name,
                 'playlist_id': playlist_id,
-                'creator': playlist.get('nick', ''),
+                'creator': '',
                 'song_count': len(formatted_songs),
                 'songs': formatted_songs
             })
         else:
-            return jsonify({'success': False, 'error': 'QQ音乐API返回错误'})
+            return jsonify({'success': False, 'error': resp.get('message') or 'QQ音乐API返回错误'})
             
     except Exception as e:
         logger.error(f'解析QQ音乐歌单失败: {e}')
@@ -5105,7 +5107,7 @@ def get_local_playlists():
             # 管理员可以看到自己的歌单和旧数据（user_hash为空），普通用户只能看到自己的
             if is_admin:
                 rows = conn.execute('''
-                    SELECT p.id, p.name, p.cover, p.created_at, p.updated_at,
+                    SELECT p.id, p.name, p.cover, p.created_at, p.updated_at, p.source_url, p.source_type, p.last_synced_at,
                            (SELECT COUNT(*) FROM playlist_songs WHERE playlist_id = p.id) as song_count,
                            (SELECT COUNT(*) FROM playlist_pending_songs WHERE playlist_id = p.id) as pending_count
                     FROM playlists p
@@ -5114,7 +5116,7 @@ def get_local_playlists():
                 ''', (user_hash,)).fetchall()
             else:
                 rows = conn.execute('''
-                    SELECT p.id, p.name, p.cover, p.created_at, p.updated_at,
+                    SELECT p.id, p.name, p.cover, p.created_at, p.updated_at, p.source_url, p.source_type, p.last_synced_at,
                            (SELECT COUNT(*) FROM playlist_songs WHERE playlist_id = p.id) as song_count,
                            (SELECT COUNT(*) FROM playlist_pending_songs WHERE playlist_id = p.id) as pending_count
                     FROM playlists p
@@ -5134,7 +5136,10 @@ def get_local_playlists():
                     'local_count': song_count,
                     'pending_count': pending_count,
                     'created_at': row['created_at'],
-                    'updated_at': row['updated_at']
+                    'updated_at': row['updated_at'],
+                    'source_url': row['source_url'],
+                    'source_type': row['source_type'],
+                    'last_synced_at': row['last_synced_at']
                 })
             
             return jsonify({'success': True, 'playlists': playlists})
@@ -5150,6 +5155,8 @@ def create_local_playlist():
         data = request.get_json() or {}
         name = data.get('name', '').strip()
         pending_songs = data.get('pending_songs', [])  # 待下载歌曲列表
+        source_url = data.get('source_url', '')  # 源歌单链接（用于同步）
+        source_type = data.get('source_type', '')  # 源类型：qq/netease
         
         if not name:
             return jsonify({'success': False, 'error': '歌单名称不能为空'})
@@ -5158,8 +5165,8 @@ def create_local_playlist():
         user_hash = session.get('user_hash', '')
         with get_db() as conn:
             cursor = conn.execute(
-                'INSERT INTO playlists (name, created_at, updated_at, user_hash) VALUES (?, ?, ?, ?)',
-                (name, now, now, user_hash)
+                'INSERT INTO playlists (name, created_at, updated_at, user_hash, source_url, source_type, last_synced_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                (name, now, now, user_hash, source_url or None, source_type or None, now if source_url else None)
             )
             playlist_id = cursor.lastrowid
             
@@ -5205,7 +5212,10 @@ def create_local_playlist():
                     'song_count': 0,
                     'pending_count': pending_count,
                     'created_at': now,
-                    'updated_at': now
+                    'updated_at': now,
+                    'source_url': source_url or None,
+                    'source_type': source_type or None,
+                    'last_synced_at': now if source_url else None
                 }
             })
     except Exception as e:
@@ -5577,6 +5587,203 @@ def convert_pending_to_local(playlist_id):
             return jsonify({'success': True})
     except Exception as e:
         logger.error(f'转换待下载歌曲失败: {e}')
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/playlists/<int:playlist_id>/sync', methods=['POST'])
+def sync_playlist(playlist_id):
+    """同步歌单（从源链接获取新歌曲）"""
+    try:
+        user_hash = session.get('user_hash', '')
+        with get_db() as conn:
+            # 获取歌单信息
+            playlist = conn.execute(
+                'SELECT id, name, source_url, source_type, user_hash FROM playlists WHERE id = ?',
+                (playlist_id,)
+            ).fetchone()
+            
+            if not playlist:
+                return jsonify({'success': False, 'error': '歌单不存在'})
+            
+            # 验证权限
+            if playlist['user_hash'] and playlist['user_hash'] != user_hash:
+                return jsonify({'success': False, 'error': '无权操作此歌单'})
+            
+            source_url = playlist['source_url']
+            source_type = playlist['source_type']
+            
+            if not source_url:
+                return jsonify({'success': False, 'error': '此歌单没有关联源链接，无法同步'})
+            
+            # 获取当前歌单中已有的歌曲ID
+            existing_qq_mids = set()
+            existing_netease_ids = set()
+            
+            # 从待下载歌曲表获取
+            pending_rows = conn.execute(
+                'SELECT qq_mid, netease_id FROM playlist_pending_songs WHERE playlist_id = ?',
+                (playlist_id,)
+            ).fetchall()
+            for row in pending_rows:
+                if row['qq_mid']:
+                    existing_qq_mids.add(row['qq_mid'])
+                if row['netease_id']:
+                    existing_netease_ids.add(str(row['netease_id']))
+            
+            # 从源获取歌曲列表
+            new_songs = []
+            
+            if source_type == 'qq':
+                # 解析QQ音乐歌单ID - 支持多种格式
+                logger.info(f'同步歌单: 尝试解析QQ音乐链接: {source_url}')
+                
+                # 如果是短链接，先解析获取真实URL
+                parse_url = source_url
+                if 'fcgi-bin/u' in source_url or 'c.y.qq.com' in source_url or 'c6.y.qq.com' in source_url:
+                    try:
+                        logger.info(f'同步歌单: 检测到短链接，尝试重定向解析')
+                        redirect_resp = requests.get(source_url, allow_redirects=True, timeout=10, headers=COMMON_HEADERS)
+                        parse_url = redirect_resp.url
+                        logger.info(f'同步歌单: 短链接重定向到: {parse_url}')
+                    except Exception as e:
+                        logger.warning(f'同步歌单: 解析短链接失败: {e}')
+                
+                id_match = (
+                    re.search(r'id=(\d+)', parse_url) or 
+                    re.search(r'/playlist/(\d+)', parse_url) or
+                    re.search(r'disstid[=:](\d+)', parse_url) or
+                    re.search(r'/(\d{8,})(?:/|$|\?)', parse_url)
+                )
+                if not id_match:
+                    return jsonify({'success': False, 'error': f'无法解析QQ音乐歌单ID，链接: {source_url}'})
+                
+                playlist_tid = id_match.group(1)
+                logger.info(f'同步歌单: 提取到QQ音乐歌单ID: {playlist_tid}')
+                
+                # 使用正确的参数名 'id'
+                resp = call_qqmusic_api('playlist', 'get_playlist_detail', {'id': playlist_tid})
+                
+                if resp.get('code') != 200:
+                    return jsonify({'success': False, 'error': resp.get('message') or '获取歌单失败'})
+                
+                # 歌曲列表在 songlist 字段中
+                songs = resp.get('data', {}).get('songlist', [])
+                for song in songs:
+                    # 支持多种字段名
+                    mid = song.get('mid') or song.get('songmid', '')
+                    if mid and mid not in existing_qq_mids:
+                        # 处理歌手
+                        singers = song.get('singer', [])
+                        artist = ', '.join([s.get('name', '') for s in singers if s.get('name')]) if singers else ''
+                        
+                        # 处理专辑
+                        album_info = song.get('album', {})
+                        if isinstance(album_info, dict):
+                            album_name = album_info.get('name', '')
+                            album_mid = album_info.get('mid', '')
+                        else:
+                            album_name = song.get('albumname', '')
+                            album_mid = song.get('albummid', '')
+                        
+                        cover = f"https://y.qq.com/music/photo_new/T002R300x300M000{album_mid}.jpg" if album_mid else ''
+                        
+                        new_songs.append({
+                            'qq_mid': mid,
+                            'title': song.get('title') or song.get('name') or song.get('songname', '未知歌曲'),
+                            'artist': artist,
+                            'album': album_name,
+                            'cover': cover,
+                            'source': 'qq'
+                        })
+            
+            elif source_type == 'netease':
+                # 解析网易云歌单ID
+                match = re.search(r'id[=:](\d+)', source_url)
+                if not match:
+                    match = re.search(r'/playlist[/?](\d+)', source_url)
+                if not match:
+                    return jsonify({'success': False, 'error': '无法解析网易云歌单ID'})
+                
+                playlist_nid = match.group(1)
+                
+                # 调用网易云API
+                if not NETEASE_API_URL:
+                    return jsonify({'success': False, 'error': '网易云API未配置'})
+                
+                netease_resp = requests.get(f'{NETEASE_API_URL}/playlist/track/all', params={'id': playlist_nid}, timeout=30)
+                data = netease_resp.json()
+                
+                if data.get('code') != 200:
+                    return jsonify({'success': False, 'error': '获取网易云歌单失败'})
+                
+                songs = data.get('songs', [])
+                for song in songs:
+                    nid = str(song.get('id', ''))
+                    if nid and nid not in existing_netease_ids:
+                        artists = song.get('ar', [])
+                        album = song.get('al', {})
+                        new_songs.append({
+                            'netease_id': nid,
+                            'title': song.get('name', '未知歌曲'),
+                            'artist': ', '.join(a.get('name', '') for a in artists) if artists else '',
+                            'album': album.get('name', '') if album else '',
+                            'cover': album.get('picUrl', '') if album else '',
+                            'source': 'netease'
+                        })
+            
+            else:
+                return jsonify({'success': False, 'error': f'不支持的源类型: {source_type}'})
+            
+            # 添加新歌曲到待下载列表
+            now = time.time()
+            added_count = 0
+            max_sort = conn.execute(
+                'SELECT MAX(sort_order) as max_sort FROM playlist_pending_songs WHERE playlist_id = ?',
+                (playlist_id,)
+            ).fetchone()
+            sort_order = (max_sort['max_sort'] or 0) + 1 if max_sort else 0
+            
+            for song in new_songs:
+                try:
+                    conn.execute('''
+                        INSERT OR IGNORE INTO playlist_pending_songs 
+                        (playlist_id, qq_mid, netease_id, title, artist, album, cover, source, added_at, sort_order)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        playlist_id,
+                        song.get('qq_mid'),
+                        song.get('netease_id'),
+                        song.get('title', '未知歌曲'),
+                        song.get('artist', ''),
+                        song.get('album', ''),
+                        song.get('cover', ''),
+                        song.get('source', 'qq'),
+                        now,
+                        sort_order
+                    ))
+                    sort_order += 1
+                    added_count += 1
+                except Exception as e:
+                    logger.warning(f'同步歌曲失败: {e}')
+            
+            # 更新歌单同步时间
+            conn.execute(
+                'UPDATE playlists SET last_synced_at = ?, updated_at = ? WHERE id = ?',
+                (now, now, playlist_id)
+            )
+            conn.commit()
+            
+            logger.info(f'歌单 {playlist_id} 同步完成，新增 {added_count} 首歌曲')
+            
+            return jsonify({
+                'success': True,
+                'added_count': added_count,
+                'message': f'同步完成，新增 {added_count} 首歌曲' if added_count > 0 else '歌单已是最新，没有新歌曲'
+            })
+    except Exception as e:
+        logger.error(f'同步歌单失败: {e}')
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
 
