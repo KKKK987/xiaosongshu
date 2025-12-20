@@ -275,7 +275,17 @@ export function switchTab(tab) {
 
   if (tab === 'playlists') {
     ui.viewPlaylists?.classList.remove('hidden');
-    loadPlaylists();
+    // 先检查是否有需要滚动的信息
+    const hasScrollInfo = !!state.lastPlaylistScrollInfo;
+    const scrollPlaylistId = hasScrollInfo ? state.lastPlaylistScrollInfo.playlistId : null;
+    
+    // 加载歌单列表，如果有滚动信息，将目标歌单加入展开列表
+    loadPlaylists(scrollPlaylistId).then(() => {
+      // 检查是否需要滚动到特定歌曲位置
+      if (hasScrollInfo) {
+        scrollToLastPlaylistSong();
+      }
+    });
   } else if (tab === 'mount') {
     ui.viewMount?.classList.remove('hidden');
     loadMountPoints();
@@ -557,13 +567,32 @@ ui.audio.addEventListener('timeupdate', () => {
 ui.audio.addEventListener('loadedmetadata', () => {
   const totalStr = formatTime(ui.audio.duration);
   ['time-total', 'fp-time-total'].forEach(id => { const el = document.getElementById(id); if (el) el.innerText = totalStr; });
-  
-  // 记录播放历史（包含时长）
+});
+
+// 记录播放历史 - 只在用户主动播放时记录（播放开始后5秒）
+let playRecordTimer = null;
+ui.audio.addEventListener('play', () => {
   const currentTrack = state.playQueue[state.currentTrackIndex];
-  if (currentTrack && !currentTrack._historyRecorded) {
-    currentTrack._historyRecorded = true;
-    const duration = Math.floor(ui.audio.duration || 0);
-    api.play.record(currentTrack.id, currentTrack.title, currentTrack.artist, duration).catch(e => console.warn('记录播放历史失败:', e));
+  if (!currentTrack || currentTrack._historyRecorded) return;
+  
+  // 清除之前的定时器
+  if (playRecordTimer) clearTimeout(playRecordTimer);
+  
+  // 延迟5秒记录，确保是真正在听歌而不是刷新页面
+  playRecordTimer = setTimeout(() => {
+    if (currentTrack && !currentTrack._historyRecorded && !ui.audio.paused) {
+      currentTrack._historyRecorded = true;
+      const duration = Math.floor(ui.audio.duration || 0);
+      api.play.record(currentTrack.id, currentTrack.title, currentTrack.artist, duration).catch(e => console.warn('记录播放历史失败:', e));
+    }
+  }, 5000);
+});
+
+// 暂停时取消记录
+ui.audio.addEventListener('pause', () => {
+  if (playRecordTimer) {
+    clearTimeout(playRecordTimer);
+    playRecordTimer = null;
   }
 });
 
@@ -1093,8 +1122,56 @@ export async function initPlayer() {
 let currentPlaylistId = null;
 let pendingSongForPlaylist = null;
 
+// 滚动到上次点击的歌单歌曲位置
+function scrollToLastPlaylistSong() {
+  const scrollInfo = state.lastPlaylistScrollInfo;
+  if (!scrollInfo) return;
+  
+  // 清除记录，避免重复滚动
+  state.lastPlaylistScrollInfo = null;
+  
+  const { playlistId, songTitle, songArtist } = scrollInfo;
+  
+  // 找到对应的歌单 wrapper
+  const wrapper = ui.playlistsContainer?.querySelector(`.playlist-wrapper[data-playlist-id="${playlistId}"]`);
+  if (!wrapper) return;
+  
+  // 歌单应该已经在 loadPlaylists 中展开并加载了歌曲
+  // 直接滚动到歌曲位置
+  setTimeout(() => scrollToSongCard(wrapper, songTitle, songArtist), 100);
+}
+
+// 滚动到指定歌曲卡片
+function scrollToSongCard(wrapper, songTitle, songArtist) {
+  const songsArea = wrapper.querySelector('.playlist-songs-area');
+  if (!songsArea) return;
+  
+  // 查找匹配的歌曲卡片
+  const cards = songsArea.querySelectorAll('.song-card');
+  for (const card of cards) {
+    const titleEl = card.querySelector('.title');
+    const artistEl = card.querySelector('.artist');
+    const cardTitle = titleEl?.textContent || titleEl?.getAttribute('title') || '';
+    const cardArtist = artistEl?.textContent || '';
+    
+    // 标题匹配（忽略大小写）
+    if (cardTitle.toLowerCase().includes(songTitle.toLowerCase()) || 
+        songTitle.toLowerCase().includes(cardTitle.toLowerCase())) {
+      // 滚动到该卡片
+      card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // 添加高亮效果
+      card.classList.add('highlight-card');
+      setTimeout(() => card.classList.remove('highlight-card'), 2000);
+      return;
+    }
+  }
+  
+  // 如果没找到匹配的卡片，至少滚动到歌单位置
+  wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 // 加载歌单列表
-async function loadPlaylists() {
+async function loadPlaylists(scrollToPlaylistId = null) {
   if (!ui.playlistsContainer) return;
   
   // 记录当前展开的歌单ID
@@ -1104,12 +1181,17 @@ async function loadPlaylists() {
     if (id) expandedIds.push(parseInt(id));
   });
   
+  // 如果有需要滚动到的歌单，确保它在展开列表中
+  if (scrollToPlaylistId && !expandedIds.includes(scrollToPlaylistId)) {
+    expandedIds.push(scrollToPlaylistId);
+  }
+  
   ui.playlistsContainer.innerHTML = '<div class="loading-text" style="padding: 4rem 0; opacity: 0.6;">加载中...</div>';
   
   try {
     const res = await api.playlists.list();
     if (res.success) {
-      renderPlaylists(res.playlists || [], expandedIds);
+      await renderPlaylists(res.playlists || [], expandedIds);
     } else {
       ui.playlistsContainer.innerHTML = `<div class="loading-text" style="padding: 4rem 0; opacity: 0.6;">${res.error || '加载失败'}</div>`;
     }
@@ -1120,7 +1202,7 @@ async function loadPlaylists() {
 }
 
 // 渲染歌单列表（展开式）
-function renderPlaylists(playlists, expandedIds = []) {
+async function renderPlaylists(playlists, expandedIds = []) {
   if (!ui.playlistsContainer) return;
   
   if (playlists.length === 0) {
@@ -1130,6 +1212,7 @@ function renderPlaylists(playlists, expandedIds = []) {
   
   ui.playlistsContainer.innerHTML = '';
   const frag = document.createDocumentFragment();
+  const loadPromises = []; // 收集所有展开歌单的加载 Promise
   
   playlists.forEach(pl => {
     const wrapper = document.createElement('div');
@@ -1234,8 +1317,8 @@ function renderPlaylists(playlists, expandedIds = []) {
       songsArea.classList.remove('hidden');
       const icon = wrapper.querySelector('.playlist-expand-icon');
       if (icon) icon.classList.add('rotated');
-      // 异步加载歌曲
-      (async () => {
+      // 异步加载歌曲，收集 Promise
+      const loadPromise = (async () => {
         try {
           const res = await api.playlists.getSongs(pl.id);
           if (res.success) {
@@ -1248,10 +1331,16 @@ function renderPlaylists(playlists, expandedIds = []) {
           songsArea.innerHTML = '<div class="loading-text" style="padding: 2rem 0; opacity: 0.6;">加载失败</div>';
         }
       })();
+      loadPromises.push(loadPromise);
     }
   });
   
   ui.playlistsContainer.appendChild(frag);
+  
+  // 等待所有展开歌单的歌曲加载完成
+  if (loadPromises.length > 0) {
+    await Promise.all(loadPromises);
+  }
 }
 
 // 切换歌单展开/收起
@@ -1744,6 +1833,15 @@ function showDownloadSourceDialog(song) {
   `;
   
   document.body.appendChild(overlay);
+  
+  // 记录歌单滚动位置信息（用于返回时定位）
+  if (song.playlist_id) {
+    state.lastPlaylistScrollInfo = {
+      playlistId: song.playlist_id,
+      songTitle: song.title,
+      songArtist: song.artist
+    };
+  }
   
   // 取消按钮
   overlay.querySelector('#download-cancel').addEventListener('click', () => {

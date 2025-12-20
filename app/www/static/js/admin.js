@@ -198,13 +198,12 @@ export async function loadUsers() {
   }
 }
 
-// 显示用户详情
+// 显示用户详情（简化版，不显示播放历史）
 export async function showUserDetail(userId) {
   adminState.selectedUserId = userId;
   try {
-    const [userRes, historyRes, statsRes] = await Promise.all([
+    const [userRes, statsRes] = await Promise.all([
       api.admin.users.get(userId),
-      api.admin.stats.userHistory(userId, { limit: 50 }),
       api.admin.stats.userStats(userId)
     ]);
     
@@ -230,18 +229,11 @@ export async function showUserDetail(userId) {
             <span class="stat-label">播放歌曲数</span>
           </div>
           <div class="stat-item">
-            <span class="stat-value">${formatDuration(statsRes.stats?.total_duration || 0)}</span>
+            <span class="stat-value">${formatDurationLong(statsRes.stats?.total_duration || 0)}</span>
             <span class="stat-label">总时长</span>
           </div>
         </div>
-        <h4>最近播放</h4>
-        <div id="user-history-container"></div>
       `;
-      
-      const historyContainer = document.getElementById('user-history-container');
-      if (historyContainer) {
-        renderUserHistory(historyRes.history || [], historyContainer);
-      }
     }
     
     // 显示弹窗

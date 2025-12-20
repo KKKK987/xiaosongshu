@@ -318,18 +318,69 @@ function showLoginModal() {
 
 const normalizeString = (str) => {
   if (!str) return '';
-  return str.toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
+  // 先统一全角字符为半角，并去掉括号前的空格
+  let s = str.replace(/（/g, '(').replace(/）/g, ')').replace(/【/g, '[').replace(/】/g, ']');
+  s = s.replace(/ \(/g, '(').replace(/ \[/g, '[');  // 去掉括号前的空格
+  return s.toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().replace(/\s+/g, ' ');
 };
+
+function normalizeArtist(artist) {
+  if (!artist) return '';
+  // 统一分隔符：/ , 、 & _ 都转为 ,
+  let normalized = artist.toLowerCase().normalize('NFKC');
+  for (const sep of ['/', '、', '&', '，', '_', ' _ ']) {
+    normalized = normalized.split(sep).join(',');
+  }
+  // 分割、去空格、排序后重新组合
+  let parts = normalized.split(',').map(p => p.trim()).filter(p => p);
+  // 如果只有一个部分，且包含空格，可能是用空格分隔的多艺术家
+  if (parts.length === 1 && parts[0].includes(' ')) {
+    const spaceParts = parts[0].split(' ').map(p => p.trim()).filter(p => p);
+    // 如果分隔后每个部分都像是一个独立的名字（不是太长），就用空格分隔
+    if (spaceParts.length >= 2 && spaceParts.every(p => p.length <= 20)) {
+      parts = spaceParts;
+    }
+  }
+  return parts.sort().join(',');
+}
 
 function isSameSong(local, song) {
   const lt = normalizeString(local.title);
   const la = normalizeString(local.artist);
   const st = normalizeString(song.title);
   const sa = normalizeString(song.artist);
-  if (lt && la && lt === st && la === sa) return true;
+  
+  // 1. 精确匹配标题和艺术家
+  if (lt && st && lt === st) {
+    if (!la || !sa || normalizeArtist(local.artist) === normalizeArtist(song.artist)) {
+      return true;
+    }
+  }
+  
+  // 2. 从文件名提取标题和艺术家进行匹配
   const fname = (local.filename || '').replace(/\.[^/.]+$/, '');
-  const nf = normalizeString(fname);
-  if (nf && nf.includes(st) && (!sa || nf.includes(sa.split(' ')[0] || ''))) return true;
+  if (fname && fname.includes(' - ')) {
+    const parts = fname.split(' - ');
+    if (parts.length === 2) {
+      const part1 = normalizeString(parts[0]);
+      const part2 = normalizeString(parts[1]);
+      
+      // 格式1: "艺术家 - 标题"
+      if (part2 === st) {
+        if (!sa || normalizeArtist(parts[0]) === normalizeArtist(song.artist)) {
+          return true;
+        }
+      }
+      
+      // 格式2: "标题 - 艺术家"
+      if (part1 === st) {
+        if (!sa || normalizeArtist(parts[1]) === normalizeArtist(song.artist)) {
+          return true;
+        }
+      }
+    }
+  }
+  
   return false;
 }
 

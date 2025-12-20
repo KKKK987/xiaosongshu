@@ -47,6 +47,8 @@ export const state = {
   qqmusicQuality: localStorage.getItem('xiaosongshu_qqmusic_quality') || 'FLAC',
   // 待添加歌曲的歌单（用于下载完成后自动添加）
   pendingPlaylistForDownload: null,
+  // 歌单滚动位置记忆（用于从 QQ/网易云返回时定位）
+  lastPlaylistScrollInfo: null,  // { playlistId, songTitle, songArtist }
 };
 
 export function persistState(audio) {

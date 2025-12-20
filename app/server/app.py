@@ -5174,6 +5174,10 @@ def create_local_playlist():
             pending_count = 0
             skipped_count = 0
             error_count = 0
+            # 记录已添加的歌曲，用于检测重复
+            added_songs = {}  # qq_mid -> {title, artist, index}
+            skipped_songs = []  # 记录所有跳过的歌曲详情
+            
             logger.info(f'创建歌单 "{name}"，准备保存 {len(pending_songs)} 首歌曲')
             
             for idx, song in enumerate(pending_songs):
@@ -5181,8 +5185,25 @@ def create_local_playlist():
                     qq_mid = song.get('mid') or song.get('qq_mid')
                     netease_id = song.get('netease_id')
                     source = song.get('source', 'qq')
+                    title = song.get('title', '未知歌曲')
+                    artist = song.get('artist', '')
                     # 优先使用前端传递的 sort_order，否则使用索引
                     sort_order = song.get('sort_order', idx)
+                    
+                    # 先检查是否已经添加过（用于详细日志）
+                    if qq_mid and qq_mid in added_songs:
+                        skipped_count += 1
+                        original = added_songs[qq_mid]
+                        skipped_songs.append({
+                            'index': idx + 1,
+                            'title': title,
+                            'artist': artist,
+                            'qq_mid': qq_mid,
+                            'original_index': original['index'],
+                            'original_title': original['title'],
+                            'original_artist': original['artist']
+                        })
+                        continue
                     
                     cursor = conn.execute('''
                         INSERT OR IGNORE INTO playlist_pending_songs 
@@ -5192,8 +5213,8 @@ def create_local_playlist():
                         playlist_id,
                         qq_mid,
                         netease_id,
-                        song.get('title', '未知歌曲'),
-                        song.get('artist', ''),
+                        title,
+                        artist,
                         song.get('album', ''),
                         song.get('cover', ''),
                         source,
@@ -5203,16 +5224,24 @@ def create_local_playlist():
                     # 只有实际插入成功才计数
                     if cursor.rowcount > 0:
                         pending_count += 1
+                        if qq_mid:
+                            added_songs[qq_mid] = {'title': title, 'artist': artist, 'index': idx + 1}
                     else:
                         skipped_count += 1
-                        if skipped_count <= 5:  # 只记录前5个跳过的
-                            logger.debug(f'跳过重复歌曲: {song.get("title")} (qq_mid={qq_mid})')
                 except Exception as e:
                     error_count += 1
                     logger.warning(f'保存待下载歌曲失败: {e}')
             
             conn.commit()
             logger.info(f'创建歌单 "{name}" 完成: 保存 {pending_count} 首, 跳过 {skipped_count} 首重复, {error_count} 首失败')
+            
+            # 详细输出所有重复歌曲
+            if skipped_songs:
+                logger.info(f'========== 重复歌曲详情 ({len(skipped_songs)} 首) ==========')
+                for s in skipped_songs:
+                    logger.info(f'  #{s["index"]} "{s["title"]}" - {s["artist"]} (mid={s["qq_mid"]})')
+                    logger.info(f'      ↳ 与 #{s["original_index"]} "{s["original_title"]}" - {s["original_artist"]} 重复')
+                logger.info(f'========== 重复歌曲详情结束 ==========')
             
             return jsonify({
                 'success': True,
@@ -5349,25 +5378,140 @@ def get_playlist_songs(playlist_id):
             converted_count = 0
             now = time.time()
             
+            def normalize_artist(artist):
+                """规范化艺术家名称：统一分隔符，排序后比较"""
+                if not artist:
+                    return ''
+                # 统一分隔符：/ , 、 & _ 空格 都转为 ,
+                normalized = artist.lower().strip()
+                for sep in ['/', '、', '&', '，', '_', ' _ ']:
+                    normalized = normalized.replace(sep, ',')
+                # 特殊处理：如果没有逗号分隔符，尝试用空格分隔（针对多艺术家用空格分隔的情况）
+                # 但要避免把单个艺术家名字中的空格也分开
+                parts = [p.strip() for p in normalized.split(',') if p.strip()]
+                # 如果只有一个部分，且包含空格，可能是用空格分隔的多艺术家
+                # 检查是否像 "川青 morerare" 这样的格式（两个中文/英文名用空格分隔）
+                if len(parts) == 1 and ' ' in parts[0]:
+                    # 尝试用空格分隔
+                    space_parts = [p.strip() for p in parts[0].split(' ') if p.strip()]
+                    # 如果分隔后每个部分都像是一个独立的名字（不是太长），就用空格分隔
+                    if len(space_parts) >= 2 and all(len(p) <= 20 for p in space_parts):
+                        parts = space_parts
+                return ','.join(sorted(parts))
+            
+            def normalize_filename_underscores(s):
+                """规范化文件名中的下划线：
+                - ' _ ' (空格下划线空格) 转为 ' / ' (艺术家分隔符)
+                - 'feat_' 转为 'feat.' 
+                - 其他单独的 '_' 保持不变
+                """
+                if not s:
+                    return ''
+                # 先处理 feat_ 等常见缩写
+                s = re.sub(r'\bfeat_', 'feat.', s, flags=re.IGNORECASE)
+                s = re.sub(r'\bft_', 'ft.', s, flags=re.IGNORECASE)
+                # 处理艺术家分隔符 ' _ ' -> ' / '
+                s = s.replace(' _ ', ' / ')
+                return s
+            
+            # 规范化函数：统一全角括号为半角，并去掉括号前的空格（仅用于标题）
+            def normalize_brackets(s):
+                if not s:
+                    return ''
+                s = s.replace('（', '(').replace('）', ')').replace('【', '[').replace('】', ']')
+                # 去掉括号前的空格: "标题 (xxx)" -> "标题(xxx)"
+                s = s.replace(' (', '(').replace(' [', '[')
+                # 移除音质标签：[无损]、[高质量]、[无损 高质量] 等
+                import re
+                s = re.sub(r'\[无损[^\]]*\]', '', s)
+                s = re.sub(r'\[高质量[^\]]*\]', '', s)
+                s = re.sub(r'\[hq[^\]]*\]', '', s, flags=re.IGNORECASE)
+                s = re.sub(r'\[flac[^\]]*\]', '', s, flags=re.IGNORECASE)
+                s = re.sub(r'\[lossless[^\]]*\]', '', s, flags=re.IGNORECASE)
+                s = re.sub(r'\[hi-?res[^\]]*\]', '', s, flags=re.IGNORECASE)
+                return s.strip()
+            
+            # 规范化函数：只统一全角括号为半角，不去掉空格（用于文件名分割前）
+            def normalize_brackets_keep_space(s):
+                if not s:
+                    return ''
+                s = s.replace('（', '(').replace('）', ')').replace('【', '[').replace('】', ']')
+                # 移除音质标签
+                import re
+                s = re.sub(r'\[无损[^\]]*\]', '', s)
+                s = re.sub(r'\[高质量[^\]]*\]', '', s)
+                s = re.sub(r'\[hq[^\]]*\]', '', s, flags=re.IGNORECASE)
+                s = re.sub(r'\[flac[^\]]*\]', '', s, flags=re.IGNORECASE)
+                s = re.sub(r'\[lossless[^\]]*\]', '', s, flags=re.IGNORECASE)
+                s = re.sub(r'\[hi-?res[^\]]*\]', '', s, flags=re.IGNORECASE)
+                return s.strip()
+            
             for row in pending_rows:
                 # 检查是否已经在本地存在（通过标题和艺术家匹配）
-                pending_title = (row['title'] or '').lower().strip()
+                pending_title = normalize_brackets(row['title'] or '').lower().strip()
                 pending_artist = (row['artist'] or '').lower().strip()
+                pending_artist_normalized = normalize_artist(row['artist'])
+                
+                # 调试日志
+                if '一路往南走' in (row['title'] or '') or '下潜' in (row['title'] or ''):
+                    logger.info(f'[匹配调试] 待下载: "{row["title"]}" -> 规范化: "{pending_title}"')
                 
                 matched_local = None
                 for local in all_local_songs:
-                    local_title = (local['title'] or '').lower().strip()
+                    local_title = normalize_brackets(local['title'] or '').lower().strip()
                     local_artist = (local['artist'] or '').lower().strip()
-                    # 精确匹配标题和艺术家
+                    local_artist_normalized = normalize_artist(local['artist'])
+                    # 文件名处理：先规范化下划线，再保留空格以便正确分割艺术家和标题
+                    filename_raw = normalize_filename_underscores(os.path.splitext(local['filename'] or '')[0])
+                    filename_base_raw = normalize_brackets_keep_space(filename_raw).lower().strip()
+                    # 用于直接比较的版本（去掉括号前空格）
+                    filename_base = normalize_brackets(filename_raw).lower().strip()
+                    
+                    # 调试日志
+                    if ('一路往南走' in (row['title'] or '') or '下潜' in (row['title'] or '') or '嚣张' in (row['title'] or '')) and \
+                       ('一路往南走' in (local['filename'] or '') or '下潜' in (local['filename'] or '') or '嚣张' in (local['filename'] or '')):
+                        logger.info(f'[匹配调试] 本地文件: "{local["filename"]}"')
+                        logger.info(f'[匹配调试]   local_title="{local_title}", filename_base="{filename_base}"')
+                        logger.info(f'[匹配调试]   pending_title="{pending_title}" == local_title? {pending_title == local_title}')
+                        logger.info(f'[匹配调试]   pending_title="{pending_title}" == filename_base? {pending_title == filename_base}')
+                        if ' - ' in filename_base_raw:
+                            dbg_parts = filename_base_raw.split(' - ', 1)
+                            logger.info(f'[匹配调试]   文件名分割(raw): part1="{dbg_parts[0]}", part2="{dbg_parts[1]}"')
+                            logger.info(f'[匹配调试]   pending_title == part2? {pending_title == normalize_brackets(dbg_parts[1]).strip()}')
+                    
+                    # 1. 精确匹配标题 + 艺术家（规范化后比较）
                     if pending_title and local_title and pending_title == local_title:
-                        if not pending_artist or not local_artist or pending_artist == local_artist:
+                        if not pending_artist or not local_artist or pending_artist_normalized == local_artist_normalized:
                             matched_local = local
                             break
-                    # 或者文件名包含标题
-                    filename_base = os.path.splitext(local['filename'] or '')[0].lower()
-                    if pending_title and pending_title in filename_base:
+                    
+                    # 2. 文件名精确匹配（去掉扩展名后完全相同）
+                    if pending_title and filename_base and pending_title == filename_base:
                         matched_local = local
                         break
+                    
+                    # 3. 文件名包含 " - " 格式，支持两种格式：
+                    #    - "艺术家 - 标题"
+                    #    - "标题 - 艺术家"
+                    if pending_title and ' - ' in filename_base_raw:
+                        parts = filename_base_raw.split(' - ', 1)
+                        if len(parts) == 2:
+                            # part1 和 part2 保留原始空格，用于艺术家比较
+                            part1_raw = parts[0].strip()
+                            part2_raw = parts[1].strip()
+                            # 标题比较时去掉括号前空格
+                            part1 = normalize_brackets(part1_raw)
+                            part2 = normalize_brackets(part2_raw)
+                            
+                            # 尝试格式1: "艺术家 - 标题" - 只要标题匹配就认为是同一首歌
+                            if pending_title == part2:
+                                matched_local = local
+                                break
+                            
+                            # 尝试格式2: "标题 - 艺术家" - 只要标题匹配就认为是同一首歌
+                            if pending_title == part1:
+                                matched_local = local
+                                break
                 
                 if matched_local:
                     # 自动转换：删除待下载记录，添加本地歌曲
@@ -5626,14 +5770,60 @@ def sync_playlist(playlist_id):
             if not source_url:
                 return jsonify({'success': False, 'error': '此歌单没有关联源链接，无法同步'})
             
-            # 获取当前歌单中已有的歌曲ID（包括待下载和已下载的本地歌曲）
+            # 清理重复数据：删除 qq_mid 重复的记录（保留最早的一条）
+            if source_type == 'qq':
+                # 先统计清理前的数量
+                before_count = conn.execute(
+                    'SELECT COUNT(*) as cnt FROM playlist_pending_songs WHERE playlist_id = ?',
+                    (playlist_id,)
+                ).fetchone()['cnt']
+                
+                conn.execute('''
+                    DELETE FROM playlist_pending_songs 
+                    WHERE playlist_id = ? AND id NOT IN (
+                        SELECT MIN(id) FROM playlist_pending_songs 
+                        WHERE playlist_id = ? AND qq_mid IS NOT NULL 
+                        GROUP BY qq_mid
+                    ) AND qq_mid IS NOT NULL
+                ''', (playlist_id, playlist_id))
+                # 删除 qq_mid 为 NULL 的记录（这些是无效数据）
+                conn.execute('''
+                    DELETE FROM playlist_pending_songs 
+                    WHERE playlist_id = ? AND qq_mid IS NULL AND source = 'qq'
+                ''', (playlist_id,))
+                conn.commit()
+                
+                # 统计清理后的数量
+                after_count = conn.execute(
+                    'SELECT COUNT(*) as cnt FROM playlist_pending_songs WHERE playlist_id = ?',
+                    (playlist_id,)
+                ).fetchone()['cnt']
+                
+                if before_count != after_count:
+                    logger.info(f'同步歌单 {playlist_id}: 清理了 {before_count - after_count} 条重复/无效记录 ({before_count} -> {after_count})')
+                    
+            elif source_type == 'netease':
+                conn.execute('''
+                    DELETE FROM playlist_pending_songs 
+                    WHERE playlist_id = ? AND id NOT IN (
+                        SELECT MIN(id) FROM playlist_pending_songs 
+                        WHERE playlist_id = ? AND netease_id IS NOT NULL 
+                        GROUP BY netease_id
+                    ) AND netease_id IS NOT NULL
+                ''', (playlist_id, playlist_id))
+                conn.execute('''
+                    DELETE FROM playlist_pending_songs 
+                    WHERE playlist_id = ? AND netease_id IS NULL AND source = 'netease'
+                ''', (playlist_id,))
+                conn.commit()
+            
+            # 获取当前歌单中已有的歌曲ID（只用 qq_mid/netease_id 来判断）
             existing_qq_mids = set()
             existing_netease_ids = set()
-            existing_local_titles = set()  # 用于匹配已下载的本地歌曲（只用标题）
             
-            # 从待下载歌曲表获取
+            # 从待下载歌曲表获取已有的 qq_mid
             pending_rows = conn.execute(
-                'SELECT qq_mid, netease_id, title, artist FROM playlist_pending_songs WHERE playlist_id = ?',
+                'SELECT qq_mid, netease_id FROM playlist_pending_songs WHERE playlist_id = ?',
                 (playlist_id,)
             ).fetchall()
             for row in pending_rows:
@@ -5641,25 +5831,8 @@ def sync_playlist(playlist_id):
                     existing_qq_mids.add(row['qq_mid'])
                 if row['netease_id']:
                     existing_netease_ids.add(str(row['netease_id']))
-                # 记录标题用于匹配（只用标题，不用艺术家，因为艺术家名称可能有差异）
-                if row['title']:
-                    # 规范化标题：转小写、去除空格和特殊字符
-                    normalized_title = ''.join(c for c in row['title'].lower() if c.isalnum())
-                    if normalized_title:
-                        existing_local_titles.add(normalized_title)
             
-            # 从已下载的本地歌曲表获取（通过 playlist_songs 关联）
-            local_rows = conn.execute('''
-                SELECT s.title, s.artist FROM playlist_songs ps
-                JOIN songs s ON ps.song_id = s.id
-                WHERE ps.playlist_id = ?
-            ''', (playlist_id,)).fetchall()
-            for row in local_rows:
-                if row['title']:
-                    # 规范化标题
-                    normalized_title = ''.join(c for c in row['title'].lower() if c.isalnum())
-                    if normalized_title:
-                        existing_local_titles.add(normalized_title)
+            logger.info(f'同步歌单 {playlist_id}: 已有 {len(existing_qq_mids)} 个qq_mid, {len(existing_netease_ids)} 个netease_id')
             
             # 从源获取歌曲列表
             new_songs = []
@@ -5702,6 +5875,7 @@ def sync_playlist(playlist_id):
                 for song in songs:
                     # 支持多种字段名
                     mid = song.get('mid') or song.get('songmid', '')
+                    # 只用 qq_mid 来判断是否已存在
                     if mid and mid not in existing_qq_mids:
                         # 处理歌手
                         singers = song.get('singer', [])
@@ -5719,12 +5893,6 @@ def sync_playlist(playlist_id):
                         cover = f"https://y.qq.com/music/photo_new/T002R300x300M000{album_mid}.jpg" if album_mid else ''
                         
                         title = song.get('title') or song.get('name') or song.get('songname', '未知歌曲')
-                        
-                        # 检查是否已存在于本地歌曲中（通过规范化标题匹配）
-                        normalized_title = ''.join(c for c in title.lower() if c.isalnum())
-                        if normalized_title and normalized_title in existing_local_titles:
-                            logger.debug(f'同步歌单: 跳过已存在的歌曲: {title} - {artist}')
-                            continue
                         
                         new_songs.append({
                             'qq_mid': mid,
@@ -5758,17 +5926,12 @@ def sync_playlist(playlist_id):
                 songs = data.get('songs', [])
                 for song in songs:
                     nid = str(song.get('id', ''))
+                    # 只用 netease_id 来判断是否已存在
                     if nid and nid not in existing_netease_ids:
                         artists = song.get('ar', [])
                         album = song.get('al', {})
                         title = song.get('name', '未知歌曲')
                         artist = ', '.join(a.get('name', '') for a in artists) if artists else ''
-                        
-                        # 检查是否已存在于本地歌曲中（通过规范化标题匹配）
-                        normalized_title = ''.join(c for c in title.lower() if c.isalnum())
-                        if normalized_title and normalized_title in existing_local_titles:
-                            logger.debug(f'同步歌单: 跳过已存在的歌曲: {title} - {artist}')
-                            continue
                         
                         new_songs.append({
                             'netease_id': nid,
@@ -5785,12 +5948,10 @@ def sync_playlist(playlist_id):
             # 添加新歌曲到待下载列表
             now = time.time()
             added_count = 0
-            skipped_by_mid = 0
-            skipped_by_title = 0
             
             # 记录已有歌曲数量
-            logger.info(f'同步歌单 {playlist_id}: 已有 {len(existing_qq_mids)} 个qq_mid, {len(existing_local_titles)} 个标题')
-            logger.info(f'同步歌单 {playlist_id}: 从源获取 {len(songs) if source_type == "qq" else len(data.get("songs", []))} 首歌曲, 待添加 {len(new_songs)} 首')
+            logger.info(f'同步歌单 {playlist_id}: 已有 {len(existing_qq_mids)} 个qq_mid, {len(existing_netease_ids)} 个netease_id')
+            logger.info(f'同步歌单 {playlist_id}: 从源获取歌曲, 待添加 {len(new_songs)} 首')
             
             max_sort = conn.execute(
                 'SELECT MAX(sort_order) as max_sort FROM playlist_pending_songs WHERE playlist_id = ?',
