@@ -5172,6 +5172,10 @@ def create_local_playlist():
             
             # 保存待下载歌曲（保持原始顺序）
             pending_count = 0
+            skipped_count = 0
+            error_count = 0
+            logger.info(f'创建歌单 "{name}"，准备保存 {len(pending_songs)} 首歌曲')
+            
             for idx, song in enumerate(pending_songs):
                 try:
                     qq_mid = song.get('mid') or song.get('qq_mid')
@@ -5180,7 +5184,7 @@ def create_local_playlist():
                     # 优先使用前端传递的 sort_order，否则使用索引
                     sort_order = song.get('sort_order', idx)
                     
-                    conn.execute('''
+                    cursor = conn.execute('''
                         INSERT OR IGNORE INTO playlist_pending_songs 
                         (playlist_id, qq_mid, netease_id, title, artist, album, cover, source, added_at, sort_order)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -5196,12 +5200,19 @@ def create_local_playlist():
                         now,
                         sort_order  # 保存原始顺序
                     ))
-                    pending_count += 1
+                    # 只有实际插入成功才计数
+                    if cursor.rowcount > 0:
+                        pending_count += 1
+                    else:
+                        skipped_count += 1
+                        if skipped_count <= 5:  # 只记录前5个跳过的
+                            logger.debug(f'跳过重复歌曲: {song.get("title")} (qq_mid={qq_mid})')
                 except Exception as e:
+                    error_count += 1
                     logger.warning(f'保存待下载歌曲失败: {e}')
             
             conn.commit()
-            logger.info(f'创建歌单 "{name}"，保存了 {pending_count} 首待下载歌曲')
+            logger.info(f'创建歌单 "{name}" 完成: 保存 {pending_count} 首, 跳过 {skipped_count} 首重复, {error_count} 首失败')
             
             return jsonify({
                 'success': True,
@@ -5615,13 +5626,14 @@ def sync_playlist(playlist_id):
             if not source_url:
                 return jsonify({'success': False, 'error': '此歌单没有关联源链接，无法同步'})
             
-            # 获取当前歌单中已有的歌曲ID
+            # 获取当前歌单中已有的歌曲ID（包括待下载和已下载的本地歌曲）
             existing_qq_mids = set()
             existing_netease_ids = set()
+            existing_local_titles = set()  # 用于匹配已下载的本地歌曲（只用标题）
             
             # 从待下载歌曲表获取
             pending_rows = conn.execute(
-                'SELECT qq_mid, netease_id FROM playlist_pending_songs WHERE playlist_id = ?',
+                'SELECT qq_mid, netease_id, title, artist FROM playlist_pending_songs WHERE playlist_id = ?',
                 (playlist_id,)
             ).fetchall()
             for row in pending_rows:
@@ -5629,6 +5641,25 @@ def sync_playlist(playlist_id):
                     existing_qq_mids.add(row['qq_mid'])
                 if row['netease_id']:
                     existing_netease_ids.add(str(row['netease_id']))
+                # 记录标题用于匹配（只用标题，不用艺术家，因为艺术家名称可能有差异）
+                if row['title']:
+                    # 规范化标题：转小写、去除空格和特殊字符
+                    normalized_title = ''.join(c for c in row['title'].lower() if c.isalnum())
+                    if normalized_title:
+                        existing_local_titles.add(normalized_title)
+            
+            # 从已下载的本地歌曲表获取（通过 playlist_songs 关联）
+            local_rows = conn.execute('''
+                SELECT s.title, s.artist FROM playlist_songs ps
+                JOIN songs s ON ps.song_id = s.id
+                WHERE ps.playlist_id = ?
+            ''', (playlist_id,)).fetchall()
+            for row in local_rows:
+                if row['title']:
+                    # 规范化标题
+                    normalized_title = ''.join(c for c in row['title'].lower() if c.isalnum())
+                    if normalized_title:
+                        existing_local_titles.add(normalized_title)
             
             # 从源获取歌曲列表
             new_songs = []
@@ -5687,9 +5718,17 @@ def sync_playlist(playlist_id):
                         
                         cover = f"https://y.qq.com/music/photo_new/T002R300x300M000{album_mid}.jpg" if album_mid else ''
                         
+                        title = song.get('title') or song.get('name') or song.get('songname', '未知歌曲')
+                        
+                        # 检查是否已存在于本地歌曲中（通过规范化标题匹配）
+                        normalized_title = ''.join(c for c in title.lower() if c.isalnum())
+                        if normalized_title and normalized_title in existing_local_titles:
+                            logger.debug(f'同步歌单: 跳过已存在的歌曲: {title} - {artist}')
+                            continue
+                        
                         new_songs.append({
                             'qq_mid': mid,
-                            'title': song.get('title') or song.get('name') or song.get('songname', '未知歌曲'),
+                            'title': title,
                             'artist': artist,
                             'album': album_name,
                             'cover': cover,
@@ -5722,10 +5761,19 @@ def sync_playlist(playlist_id):
                     if nid and nid not in existing_netease_ids:
                         artists = song.get('ar', [])
                         album = song.get('al', {})
+                        title = song.get('name', '未知歌曲')
+                        artist = ', '.join(a.get('name', '') for a in artists) if artists else ''
+                        
+                        # 检查是否已存在于本地歌曲中（通过规范化标题匹配）
+                        normalized_title = ''.join(c for c in title.lower() if c.isalnum())
+                        if normalized_title and normalized_title in existing_local_titles:
+                            logger.debug(f'同步歌单: 跳过已存在的歌曲: {title} - {artist}')
+                            continue
+                        
                         new_songs.append({
                             'netease_id': nid,
-                            'title': song.get('name', '未知歌曲'),
-                            'artist': ', '.join(a.get('name', '') for a in artists) if artists else '',
+                            'title': title,
+                            'artist': artist,
                             'album': album.get('name', '') if album else '',
                             'cover': album.get('picUrl', '') if album else '',
                             'source': 'netease'
@@ -5737,6 +5785,13 @@ def sync_playlist(playlist_id):
             # 添加新歌曲到待下载列表
             now = time.time()
             added_count = 0
+            skipped_by_mid = 0
+            skipped_by_title = 0
+            
+            # 记录已有歌曲数量
+            logger.info(f'同步歌单 {playlist_id}: 已有 {len(existing_qq_mids)} 个qq_mid, {len(existing_local_titles)} 个标题')
+            logger.info(f'同步歌单 {playlist_id}: 从源获取 {len(songs) if source_type == "qq" else len(data.get("songs", []))} 首歌曲, 待添加 {len(new_songs)} 首')
+            
             max_sort = conn.execute(
                 'SELECT MAX(sort_order) as max_sort FROM playlist_pending_songs WHERE playlist_id = ?',
                 (playlist_id,)
@@ -5745,7 +5800,7 @@ def sync_playlist(playlist_id):
             
             for song in new_songs:
                 try:
-                    conn.execute('''
+                    cursor = conn.execute('''
                         INSERT OR IGNORE INTO playlist_pending_songs 
                         (playlist_id, qq_mid, netease_id, title, artist, album, cover, source, added_at, sort_order)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -5762,7 +5817,9 @@ def sync_playlist(playlist_id):
                         sort_order
                     ))
                     sort_order += 1
-                    added_count += 1
+                    # 只有实际插入成功才计数
+                    if cursor.rowcount > 0:
+                        added_count += 1
                 except Exception as e:
                     logger.warning(f'同步歌曲失败: {e}')
             

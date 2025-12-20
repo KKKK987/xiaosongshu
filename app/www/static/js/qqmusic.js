@@ -989,7 +989,7 @@ async function saveQQAsPlaylist() {
     !state.fullPlaylist || !state.fullPlaylist.some(local => isSameSong(local, song))
   );
   
-  // 准备待下载歌曲列表
+  // 准备待下载歌曲列表（包含所有歌曲，后端会自动匹配本地已有的）
   const pendingSongs = state.qqmusicResults.map((song, idx) => ({
     qq_mid: song.mid,
     title: song.title || song.name || '未知歌曲',

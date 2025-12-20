@@ -4025,6 +4025,12 @@ select:focus {
     margin-top: 0.3rem;
 }
 
+.setting-row select option {
+    background: #1e1e1e;
+    color: white;
+    padding: 0.5rem;
+}
+
 .netease-select-input {
     width: 100%;
     padding: 0.6rem;
