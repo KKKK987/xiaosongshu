@@ -51,6 +51,7 @@ async function playDownloadedSong(song) {
     return;
   }
   state.playQueue = [...state.fullPlaylist];
+  state.currentPlayingPlaylistId = null;  // 清除歌单播放状态
   await playTrack(idx);
 }
 

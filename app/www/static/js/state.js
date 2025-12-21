@@ -49,6 +49,8 @@ export const state = {
   pendingPlaylistForDownload: null,
   // 歌单滚动位置记忆（用于从 QQ/网易云返回时定位）
   lastPlaylistScrollInfo: null,  // { playlistId, songTitle, songArtist }
+  // 当前播放的歌单信息（用于展开歌单时自动定位）
+  currentPlayingPlaylistId: null,  // 当前正在播放的歌单ID
 };
 
 export function persistState(audio) {

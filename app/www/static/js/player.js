@@ -219,6 +219,7 @@ export function renderPlaylist() {
     card.addEventListener('click', (e) => {
       if (!e.target.closest('.card-fav-btn') && !e.target.closest('.card-add-btn')) {
         state.playQueue = [...state.displayPlaylist];
+        state.currentPlayingPlaylistId = null;  // 清除歌单播放状态
         playTrack(index);
       }
     });
@@ -279,11 +280,23 @@ export function switchTab(tab) {
     const hasScrollInfo = !!state.lastPlaylistScrollInfo;
     const scrollPlaylistId = hasScrollInfo ? state.lastPlaylistScrollInfo.playlistId : null;
     
-    // 加载歌单列表，如果有滚动信息，将目标歌单加入展开列表
-    loadPlaylists(scrollPlaylistId).then(() => {
+    // 如果没有滚动信息，但正在播放歌单中的歌曲，则自动展开并滚动到当前播放歌曲
+    const autoExpandPlaylistId = scrollPlaylistId || state.currentPlayingPlaylistId;
+    
+    // 加载歌单列表，如果有滚动信息或正在播放歌单，将目标歌单加入展开列表
+    loadPlaylists(autoExpandPlaylistId).then(() => {
       // 检查是否需要滚动到特定歌曲位置
       if (hasScrollInfo) {
         scrollToLastPlaylistSong();
+      } else if (state.currentPlayingPlaylistId) {
+        // 滚动到当前播放的歌曲
+        const wrapper = ui.playlistsContainer?.querySelector(`.playlist-wrapper[data-playlist-id="${state.currentPlayingPlaylistId}"]`);
+        if (wrapper) {
+          const songsArea = wrapper.querySelector('.playlist-songs-area');
+          if (songsArea) {
+            scrollToCurrentPlayingSong(state.currentPlayingPlaylistId, songsArea);
+          }
+        }
       }
     });
   } else if (tab === 'mount') {
@@ -1259,6 +1272,7 @@ async function renderPlaylists(playlists, expandedIds = []) {
             return;
           }
           state.playQueue = playableSongs.map(s => state.fullPlaylist.find(f => f.id === s.id));
+          state.currentPlayingPlaylistId = pl.id;  // 记录当前播放的歌单ID
           playTrack(0);
           showToast(`开始播放 ${playableSongs.length} 首歌曲`);
         } else {
@@ -1290,10 +1304,8 @@ async function renderPlaylists(playlists, expandedIds = []) {
           const res = await api.playlists.sync(pl.id);
           if (res.success) {
             showToast(res.message || '同步完成');
-            // 如果有新歌曲，刷新歌单
-            if (res.added_count > 0) {
-              loadPlaylists();
-            }
+            // 同步完成后始终刷新歌单列表，确保显示正确的歌曲数量
+            loadPlaylists();
           } else {
             showToast(res.error || '同步失败');
           }
@@ -1365,6 +1377,9 @@ async function togglePlaylistExpand(playlistId, playlistName, wrapper, songsArea
       const res = await api.playlists.getSongs(playlistId);
       if (res.success) {
         renderPlaylistSongsInline(res.songs, res.pending_songs || [], playlistId, songsArea);
+        
+        // 如果当前正在播放这个歌单的歌曲，自动滚动到当前播放位置
+        scrollToCurrentPlayingSong(playlistId, songsArea);
       } else {
         songsArea.innerHTML = `<div class="loading-text" style="padding: 2rem 0; opacity: 0.6;">${res.error || '加载失败'}</div>`;
       }
@@ -1373,6 +1388,35 @@ async function togglePlaylistExpand(playlistId, playlistName, wrapper, songsArea
       songsArea.innerHTML = '<div class="loading-text" style="padding: 2rem 0; opacity: 0.6;">加载失败</div>';
     }
   }
+}
+
+// 滚动到当前播放的歌曲
+function scrollToCurrentPlayingSong(playlistId, container) {
+  // 检查是否正在播放这个歌单
+  if (state.currentPlayingPlaylistId !== playlistId) return;
+  
+  const currentSong = state.playQueue[state.currentTrackIndex];
+  if (!currentSong) return;
+  
+  // 延迟执行，确保 DOM 已渲染
+  setTimeout(() => {
+    const cards = container.querySelectorAll('.song-card.mini:not(.pending)');
+    for (const card of cards) {
+      const titleEl = card.querySelector('.title');
+      const artistEl = card.querySelector('.artist');
+      if (titleEl && artistEl) {
+        const title = titleEl.textContent || titleEl.innerText;
+        const artist = artistEl.textContent || artistEl.innerText;
+        if (title === currentSong.title && artist === currentSong.artist) {
+          // 找到当前播放的歌曲，滚动并高亮
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          card.classList.add('highlight-card');
+          setTimeout(() => card.classList.remove('highlight-card'), 2000);
+          break;
+        }
+      }
+    }
+  }, 100);
 }
 
 // 渲染歌单内歌曲（内联展开式）
@@ -1493,6 +1537,7 @@ function renderPlaylistSongsInline(songs, pendingSongs, playlistId, container) {
           const playlistIdx = playlistLocalSongs.findIndex(s => s.id === song.id);
           if (playlistIdx !== -1) {
             state.playQueue = playlistLocalSongs;
+            state.currentPlayingPlaylistId = playlistId;  // 记录当前播放的歌单ID
             playTrack(playlistIdx);
           }
         } else {
@@ -1586,6 +1631,7 @@ function renderPlaylistSongs(songs, playlistId) {
         if (fullSong) {
           const idx = state.fullPlaylist.indexOf(fullSong);
           state.playQueue = [...state.fullPlaylist];
+          state.currentPlayingPlaylistId = null;  // 这是从详情页播放，清除歌单状态
           playTrack(idx);
         } else {
           // 歌曲不在本地，弹出下载选择框

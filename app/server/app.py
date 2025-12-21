@@ -5243,6 +5243,51 @@ def create_local_playlist():
                     logger.info(f'      ↳ 与 #{s["original_index"]} "{s["original_title"]}" - {s["original_artist"]} 重复')
                 logger.info(f'========== 重复歌曲详情结束 ==========')
             
+            # 保存歌单数据到用户文件
+            if user_hash:
+                try:
+                    user_data = load_user_data(user_hash)
+                    if user_data:
+                        if 'playlists' not in user_data:
+                            user_data['playlists'] = []
+                        # 构建歌单数据（包含所有歌曲信息，去重）
+                        playlist_data = {
+                            'id': playlist_id,
+                            'name': name,
+                            'source_url': source_url or None,
+                            'source_type': source_type or None,
+                            'created_at': now,
+                            'songs': []
+                        }
+                        # 保存所有歌曲的详细信息（去重）
+                        seen_mids = set()
+                        for song in pending_songs:
+                            qq_mid = song.get('mid') or song.get('qq_mid')
+                            netease_id = song.get('netease_id')
+                            # 用 qq_mid 或 netease_id 去重
+                            song_key = qq_mid or netease_id
+                            if song_key and song_key in seen_mids:
+                                continue
+                            if song_key:
+                                seen_mids.add(song_key)
+                            
+                            song_data = {
+                                'qq_mid': qq_mid,
+                                'netease_id': netease_id,
+                                'title': song.get('title', '未知歌曲'),
+                                'artist': song.get('artist', ''),
+                                'album': song.get('album', ''),
+                                'cover': song.get('cover', ''),
+                                'source': song.get('source', 'qq'),
+                                'sort_order': len(playlist_data['songs'])  # 使用去重后的索引
+                            }
+                            playlist_data['songs'].append(song_data)
+                        user_data['playlists'].append(playlist_data)
+                        save_user_data(user_hash, user_data)
+                        logger.info(f'歌单数据已保存到用户文件: {len(playlist_data["songs"])} 首歌曲')
+                except Exception as e:
+                    logger.warning(f'保存歌单到用户文件失败: {e}')
+            
             return jsonify({
                 'success': True,
                 'playlist': {
@@ -5283,6 +5328,18 @@ def delete_local_playlist(playlist_id):
             conn.execute('DELETE FROM playlist_pending_songs WHERE playlist_id = ?', (playlist_id,))
             conn.execute('DELETE FROM playlists WHERE id = ?', (playlist_id,))
             conn.commit()
+            
+            # 同步删除用户文件中的歌单数据
+            if user_hash:
+                try:
+                    user_data = load_user_data(user_hash)
+                    if user_data and 'playlists' in user_data:
+                        user_data['playlists'] = [p for p in user_data['playlists'] if p.get('id') != playlist_id]
+                        save_user_data(user_hash, user_data)
+                        logger.info(f'已从用户文件中删除歌单 {playlist_id}')
+                except Exception as e:
+                    logger.warning(f'从用户文件删除歌单失败: {e}')
+            
             return jsonify({'success': True})
     except Exception as e:
         logger.error(f'删除歌单失败: {e}')
@@ -5747,7 +5804,7 @@ def convert_pending_to_local(playlist_id):
 
 @app.route('/api/playlists/<int:playlist_id>/sync', methods=['POST'])
 def sync_playlist(playlist_id):
-    """同步歌单（从源链接获取新歌曲）"""
+    """同步歌单（从源链接获取新歌曲，和用户文件对比）"""
     try:
         user_hash = session.get('user_hash', '')
         with get_db() as conn:
@@ -5766,82 +5823,38 @@ def sync_playlist(playlist_id):
             
             source_url = playlist['source_url']
             source_type = playlist['source_type']
+            playlist_name = playlist['name']
             
             if not source_url:
                 return jsonify({'success': False, 'error': '此歌单没有关联源链接，无法同步'})
             
-            # 清理重复数据：删除 qq_mid 重复的记录（保留最早的一条）
-            if source_type == 'qq':
-                # 先统计清理前的数量
-                before_count = conn.execute(
-                    'SELECT COUNT(*) as cnt FROM playlist_pending_songs WHERE playlist_id = ?',
-                    (playlist_id,)
-                ).fetchone()['cnt']
-                
-                conn.execute('''
-                    DELETE FROM playlist_pending_songs 
-                    WHERE playlist_id = ? AND id NOT IN (
-                        SELECT MIN(id) FROM playlist_pending_songs 
-                        WHERE playlist_id = ? AND qq_mid IS NOT NULL 
-                        GROUP BY qq_mid
-                    ) AND qq_mid IS NOT NULL
-                ''', (playlist_id, playlist_id))
-                # 删除 qq_mid 为 NULL 的记录（这些是无效数据）
-                conn.execute('''
-                    DELETE FROM playlist_pending_songs 
-                    WHERE playlist_id = ? AND qq_mid IS NULL AND source = 'qq'
-                ''', (playlist_id,))
-                conn.commit()
-                
-                # 统计清理后的数量
-                after_count = conn.execute(
-                    'SELECT COUNT(*) as cnt FROM playlist_pending_songs WHERE playlist_id = ?',
-                    (playlist_id,)
-                ).fetchone()['cnt']
-                
-                if before_count != after_count:
-                    logger.info(f'同步歌单 {playlist_id}: 清理了 {before_count - after_count} 条重复/无效记录 ({before_count} -> {after_count})')
-                    
-            elif source_type == 'netease':
-                conn.execute('''
-                    DELETE FROM playlist_pending_songs 
-                    WHERE playlist_id = ? AND id NOT IN (
-                        SELECT MIN(id) FROM playlist_pending_songs 
-                        WHERE playlist_id = ? AND netease_id IS NOT NULL 
-                        GROUP BY netease_id
-                    ) AND netease_id IS NOT NULL
-                ''', (playlist_id, playlist_id))
-                conn.execute('''
-                    DELETE FROM playlist_pending_songs 
-                    WHERE playlist_id = ? AND netease_id IS NULL AND source = 'netease'
-                ''', (playlist_id,))
-                conn.commit()
+            # ========== 第一步：从用户文件读取旧歌单数据 ==========
+            old_songs_map = {}  # qq_mid/netease_id -> song_data
+            user_playlist_data = None
             
-            # 获取当前歌单中已有的歌曲ID（只用 qq_mid/netease_id 来判断）
-            existing_qq_mids = set()
-            existing_netease_ids = set()
+            if user_hash:
+                user_data = load_user_data(user_hash)
+                if user_data and 'playlists' in user_data:
+                    for p in user_data['playlists']:
+                        if p.get('id') == playlist_id:
+                            user_playlist_data = p
+                            for song in p.get('songs', []):
+                                if source_type == 'qq' and song.get('qq_mid'):
+                                    old_songs_map[song['qq_mid']] = song
+                                elif source_type == 'netease' and song.get('netease_id'):
+                                    old_songs_map[str(song['netease_id'])] = song
+                            break
             
-            # 从待下载歌曲表获取已有的 qq_mid
-            pending_rows = conn.execute(
-                'SELECT qq_mid, netease_id FROM playlist_pending_songs WHERE playlist_id = ?',
-                (playlist_id,)
-            ).fetchall()
-            for row in pending_rows:
-                if row['qq_mid']:
-                    existing_qq_mids.add(row['qq_mid'])
-                if row['netease_id']:
-                    existing_netease_ids.add(str(row['netease_id']))
+            logger.info(f'同步歌单 {playlist_id} "{playlist_name}": 用户文件中有 {len(old_songs_map)} 首歌曲')
             
-            logger.info(f'同步歌单 {playlist_id}: 已有 {len(existing_qq_mids)} 个qq_mid, {len(existing_netease_ids)} 个netease_id')
-            
-            # 从源获取歌曲列表
-            new_songs = []
+            # ========== 第二步：从源获取最新歌曲列表 ==========
+            all_source_songs = []  # 源的完整歌曲列表
+            source_songs_map = {}  # qq_mid/netease_id -> song_data
             
             if source_type == 'qq':
-                # 解析QQ音乐歌单ID - 支持多种格式
+                # 解析QQ音乐歌单ID
                 logger.info(f'同步歌单: 尝试解析QQ音乐链接: {source_url}')
                 
-                # 如果是短链接，先解析获取真实URL
                 parse_url = source_url
                 if 'fcgi-bin/u' in source_url or 'c.y.qq.com' in source_url or 'c6.y.qq.com' in source_url:
                     try:
@@ -5864,47 +5877,49 @@ def sync_playlist(playlist_id):
                 playlist_tid = id_match.group(1)
                 logger.info(f'同步歌单: 提取到QQ音乐歌单ID: {playlist_tid}')
                 
-                # 使用正确的参数名 'id'
                 resp = call_qqmusic_api('playlist', 'get_playlist_detail', {'id': playlist_tid})
                 
                 if resp.get('code') != 200:
                     return jsonify({'success': False, 'error': resp.get('message') or '获取歌单失败'})
                 
-                # 歌曲列表在 songlist 字段中
                 songs = resp.get('data', {}).get('songlist', [])
-                for song in songs:
-                    # 支持多种字段名
+                for idx, song in enumerate(songs):
                     mid = song.get('mid') or song.get('songmid', '')
-                    # 只用 qq_mid 来判断是否已存在
-                    if mid and mid not in existing_qq_mids:
-                        # 处理歌手
-                        singers = song.get('singer', [])
-                        artist = ', '.join([s.get('name', '') for s in singers if s.get('name')]) if singers else ''
-                        
-                        # 处理专辑
-                        album_info = song.get('album', {})
-                        if isinstance(album_info, dict):
-                            album_name = album_info.get('name', '')
-                            album_mid = album_info.get('mid', '')
-                        else:
-                            album_name = song.get('albumname', '')
-                            album_mid = song.get('albummid', '')
-                        
-                        cover = f"https://y.qq.com/music/photo_new/T002R300x300M000{album_mid}.jpg" if album_mid else ''
-                        
-                        title = song.get('title') or song.get('name') or song.get('songname', '未知歌曲')
-                        
-                        new_songs.append({
-                            'qq_mid': mid,
-                            'title': title,
-                            'artist': artist,
-                            'album': album_name,
-                            'cover': cover,
-                            'source': 'qq'
-                        })
+                    if not mid:
+                        continue
+                    
+                    # 跳过重复的 qq_mid（歌单里可能有重复歌曲）
+                    if mid in source_songs_map:
+                        continue
+                    
+                    singers = song.get('singer', [])
+                    artist = ', '.join([s.get('name', '') for s in singers if s.get('name')]) if singers else ''
+                    
+                    album_info = song.get('album', {})
+                    if isinstance(album_info, dict):
+                        album_name = album_info.get('name', '')
+                        album_mid = album_info.get('mid', '')
+                    else:
+                        album_name = song.get('albumname', '')
+                        album_mid = song.get('albummid', '')
+                    
+                    cover = f"https://y.qq.com/music/photo_new/T002R300x300M000{album_mid}.jpg" if album_mid else ''
+                    title = song.get('title') or song.get('name') or song.get('songname', '未知歌曲')
+                    
+                    song_data = {
+                        'qq_mid': mid,
+                        'netease_id': None,
+                        'title': title,
+                        'artist': artist,
+                        'album': album_name,
+                        'cover': cover,
+                        'source': 'qq',
+                        'sort_order': len(all_source_songs)  # 使用去重后的索引
+                    }
+                    all_source_songs.append(song_data)
+                    source_songs_map[mid] = song_data
             
             elif source_type == 'netease':
-                # 解析网易云歌单ID
                 match = re.search(r'id[=:](\d+)', source_url)
                 if not match:
                     match = re.search(r'/playlist[/?](\d+)', source_url)
@@ -5913,7 +5928,6 @@ def sync_playlist(playlist_id):
                 
                 playlist_nid = match.group(1)
                 
-                # 调用网易云API
                 if not NETEASE_API_URL:
                     return jsonify({'success': False, 'error': '网易云API未配置'})
                 
@@ -5924,45 +5938,61 @@ def sync_playlist(playlist_id):
                     return jsonify({'success': False, 'error': '获取网易云歌单失败'})
                 
                 songs = data.get('songs', [])
-                for song in songs:
+                for idx, song in enumerate(songs):
                     nid = str(song.get('id', ''))
-                    # 只用 netease_id 来判断是否已存在
-                    if nid and nid not in existing_netease_ids:
-                        artists = song.get('ar', [])
-                        album = song.get('al', {})
-                        title = song.get('name', '未知歌曲')
-                        artist = ', '.join(a.get('name', '') for a in artists) if artists else ''
-                        
-                        new_songs.append({
-                            'netease_id': nid,
-                            'title': title,
-                            'artist': artist,
-                            'album': album.get('name', '') if album else '',
-                            'cover': album.get('picUrl', '') if album else '',
-                            'source': 'netease'
-                        })
+                    if not nid:
+                        continue
+                    
+                    # 跳过重复的 netease_id
+                    if nid in source_songs_map:
+                        continue
+                    
+                    artists = song.get('ar', [])
+                    album = song.get('al', {})
+                    title = song.get('name', '未知歌曲')
+                    artist = ', '.join(a.get('name', '') for a in artists) if artists else ''
+                    
+                    song_data = {
+                        'qq_mid': None,
+                        'netease_id': nid,
+                        'title': title,
+                        'artist': artist,
+                        'album': album.get('name', '') if album else '',
+                        'cover': album.get('picUrl', '') if album else '',
+                        'source': 'netease',
+                        'sort_order': len(all_source_songs)  # 使用去重后的索引
+                    }
+                    all_source_songs.append(song_data)
+                    source_songs_map[nid] = song_data
             
             else:
                 return jsonify({'success': False, 'error': f'不支持的源类型: {source_type}'})
             
-            # 添加新歌曲到待下载列表
+            logger.info(f'同步歌单 {playlist_id}: 从源获取到 {len(all_source_songs)} 首歌曲')
+            
+            # ========== 第三步：对比找出新增和删除的歌曲 ==========
+            old_ids = set(old_songs_map.keys())
+            new_ids = set(source_songs_map.keys())
+            
+            added_ids = new_ids - old_ids  # 新增的
+            removed_ids = old_ids - new_ids  # 删除的
+            
+            logger.info(f'同步歌单 {playlist_id}: 新增 {len(added_ids)} 首, 删除 {len(removed_ids)} 首')
+            
+            # ========== 第四步：更新数据库（清空后重新插入） ==========
             now = time.time()
-            added_count = 0
             
-            # 记录已有歌曲数量
-            logger.info(f'同步歌单 {playlist_id}: 已有 {len(existing_qq_mids)} 个qq_mid, {len(existing_netease_ids)} 个netease_id')
-            logger.info(f'同步歌单 {playlist_id}: 从源获取歌曲, 待添加 {len(new_songs)} 首')
+            # 清空该歌单的所有记录（包括已下载和待下载）
+            # 这样可以避免重复计算歌曲数量
+            conn.execute('DELETE FROM playlist_songs WHERE playlist_id = ?', (playlist_id,))
+            conn.execute('DELETE FROM playlist_pending_songs WHERE playlist_id = ?', (playlist_id,))
             
-            max_sort = conn.execute(
-                'SELECT MAX(sort_order) as max_sort FROM playlist_pending_songs WHERE playlist_id = ?',
-                (playlist_id,)
-            ).fetchone()
-            sort_order = (max_sort['max_sort'] or 0) + 1 if max_sort else 0
-            
-            for song in new_songs:
+            # 重新插入所有歌曲
+            inserted_count = 0
+            for song in all_source_songs:
                 try:
-                    cursor = conn.execute('''
-                        INSERT OR IGNORE INTO playlist_pending_songs 
+                    conn.execute('''
+                        INSERT INTO playlist_pending_songs 
                         (playlist_id, qq_mid, netease_id, title, artist, album, cover, source, added_at, sort_order)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
@@ -5975,14 +6005,11 @@ def sync_playlist(playlist_id):
                         song.get('cover', ''),
                         song.get('source', 'qq'),
                         now,
-                        sort_order
+                        song.get('sort_order', 0)
                     ))
-                    sort_order += 1
-                    # 只有实际插入成功才计数
-                    if cursor.rowcount > 0:
-                        added_count += 1
+                    inserted_count += 1
                 except Exception as e:
-                    logger.warning(f'同步歌曲失败: {e}')
+                    logger.warning(f'插入歌曲失败: {e}')
             
             # 更新歌单同步时间
             conn.execute(
@@ -5991,12 +6018,65 @@ def sync_playlist(playlist_id):
             )
             conn.commit()
             
-            logger.info(f'歌单 {playlist_id} 同步完成，新增 {added_count} 首歌曲')
+            logger.info(f'同步歌单 {playlist_id}: 数据库已更新，共 {inserted_count} 首歌曲')
+            
+            # ========== 第五步：更新用户文件 ==========
+            if user_hash and (added_ids or removed_ids or not user_playlist_data):
+                try:
+                    user_data = load_user_data(user_hash)
+                    if user_data:
+                        if 'playlists' not in user_data:
+                            user_data['playlists'] = []
+                        
+                        # 查找并更新歌单数据
+                        found = False
+                        for i, p in enumerate(user_data['playlists']):
+                            if p.get('id') == playlist_id:
+                                user_data['playlists'][i] = {
+                                    'id': playlist_id,
+                                    'name': playlist_name,
+                                    'source_url': source_url,
+                                    'source_type': source_type,
+                                    'created_at': p.get('created_at', now),
+                                    'last_synced_at': now,
+                                    'songs': all_source_songs
+                                }
+                                found = True
+                                break
+                        
+                        # 如果没找到，添加新的
+                        if not found:
+                            user_data['playlists'].append({
+                                'id': playlist_id,
+                                'name': playlist_name,
+                                'source_url': source_url,
+                                'source_type': source_type,
+                                'created_at': now,
+                                'last_synced_at': now,
+                                'songs': all_source_songs
+                            })
+                        
+                        save_user_data(user_hash, user_data)
+                        logger.info(f'同步歌单 {playlist_id}: 用户文件已更新，共 {len(all_source_songs)} 首歌曲')
+                except Exception as e:
+                    logger.warning(f'更新用户文件失败: {e}')
+            
+            # 构建返回消息
+            if added_ids or removed_ids:
+                message = f'同步完成：新增 {len(added_ids)} 首'
+                if removed_ids:
+                    message += f'，移除 {len(removed_ids)} 首'
+            else:
+                message = '歌单已是最新，没有变化'
+            
+            logger.info(f'歌单 {playlist_id} 同步完成: {message}')
             
             return jsonify({
                 'success': True,
-                'added_count': added_count,
-                'message': f'同步完成，新增 {added_count} 首歌曲' if added_count > 0 else '歌单已是最新，没有新歌曲'
+                'added_count': len(added_ids),
+                'removed_count': len(removed_ids),
+                'total_count': len(all_source_songs),
+                'message': message
             })
     except Exception as e:
         logger.error(f'同步歌单失败: {e}')

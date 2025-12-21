@@ -1,17 +1,18 @@
 {
-    "name": "xiaosongshu",
-    "short_name": "xiaosongshu",
-    "description": "xiaosongshu 本地播放器",
+    "name": "小松鼠",
+    "short_name": "小松鼠",
+    "description": "小松鼠 本地音乐播放器",
     "start_url": "/",
     "display": "standalone",
-    "background_color": "#000000",
+    "background_color": "#1a1a2e",
     "theme_color": "#1db954",
     "orientation": "any",
     "icons": [
         {
             "src": "/static/images/ICON_256.PNG",
             "sizes": "256x256",
-            "type": "image/png"
+            "type": "image/png",
+            "purpose": "any maskable"
         }
     ]
 }
