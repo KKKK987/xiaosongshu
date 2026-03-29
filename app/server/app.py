@@ -394,6 +394,7 @@ def require_auth():
         '/api/qqmusic/search',
         '/api/qqmusic/song/url',
         '/api/netease/search',
+        '/api/netease/song/url',
     ]
     
     # 检查是否是预览相关的 API 请求
@@ -404,6 +405,7 @@ def require_auth():
         '/api/qqmusic/search',
         '/api/qqmusic/song/url',
         '/api/netease/search',
+        '/api/netease/song/url',
     ]
     is_external_api = any(path.startswith(p) for p in external_api_paths)
     if is_external_api:
@@ -2589,6 +2591,62 @@ def netease_song_detail():
     except Exception as e:
         logger.warning(f"获取单曲详情失败: {e}")
         return jsonify({'success': False, 'error': '获取歌曲信息失败'})
+
+@app.route('/api/netease/song/url')
+def netease_song_url():
+    """获取网易云单曲可试听/可下载链接。"""
+    raw_input = request.args.get('id') or request.args.get('link') or request.args.get('input')
+    level = (request.args.get('level') or 'standard').strip().lower()
+    parsed_input = _resolve_netease_input(raw_input, prefer='song')
+    if not parsed_input:
+        return jsonify({'success': False, 'error': '缺少歌曲链接或ID'})
+    if parsed_input.get('type') == 'playlist':
+        return jsonify({'success': False, 'error': '检测到歌单链接，请切换歌单解析'})
+
+    song_id = parsed_input['id']
+    valid_levels = {'standard', 'higher', 'exhigh', 'lossless', 'hires', 'jyeffect', 'sky', 'dolby', 'jymaster'}
+    if level not in valid_levels:
+        level = 'standard'
+
+    try:
+        api_resp = call_netease_api('/song/url/v1', {'id': song_id, 'level': level}, need_cookie=bool(NETEASE_COOKIE))
+        data_list = api_resp.get('data') if isinstance(api_resp, dict) else None
+        track_info = None
+        if isinstance(data_list, list) and data_list:
+            track_info = data_list[0]
+        elif isinstance(data_list, dict):
+            track_info = data_list
+
+        # 兜底到 standard，提升试听成功率
+        if (not track_info or not (track_info.get('url') or track_info.get('proxyUrl'))) and level != 'standard':
+            api_resp_std = call_netease_api('/song/url/v1', {'id': song_id, 'level': 'standard'}, need_cookie=bool(NETEASE_COOKIE))
+            data_list = api_resp_std.get('data') if isinstance(api_resp_std, dict) else None
+            if isinstance(data_list, list) and data_list:
+                track_info = data_list[0]
+            elif isinstance(data_list, dict):
+                track_info = data_list
+            level = 'standard'
+
+        if not track_info:
+            return jsonify({'success': False, 'error': '未获取到歌曲链接信息'})
+
+        url = track_info.get('url') or track_info.get('proxyUrl')
+        if not url:
+            return jsonify({'success': False, 'error': '当前音质暂无可用链接'})
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'id': song_id,
+                'url': url,
+                'level': level,
+                'size': track_info.get('size') or 0,
+                'type': track_info.get('type') or track_info.get('encodeType') or 'mp3'
+            }
+        })
+    except Exception as e:
+        logger.warning(f"获取网易云歌曲链接失败: {e}")
+        return jsonify({'success': False, 'error': '获取链接失败'})
 
         # 索引文件
         index_single_file(target_path)

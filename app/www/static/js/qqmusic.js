@@ -1,11 +1,21 @@
 import { state } from './state.js';
 import { ui } from './ui.js';
 import { api } from './api.js';
-import { playTrack, loadPlaylists } from './player.js';
+import { playTrack, loadPlaylists, playPreviewTrack } from './player.js';
 import { showToast, formatTime } from './utils.js';
 
 // QQ 音乐业务模块
 let songRefreshCallback = null;
+let activeQQPreviewMid = null;
+let activeQQPreviewBtn = null;
+let qqDownloadRenderTimer = null;
+
+const QQ_QUALITY_OPTIONS = [
+  { value: 'FLAC', label: '无损 FLAC' },
+  { value: 'MP3_320', label: 'MP3 320K' },
+  { value: 'MP3_128', label: 'MP3 128K' },
+  { value: 'OGG_192', label: 'OGG 192K' }
+];
 
 // 下载完成后处理歌单状态（后端会自动转换待下载歌曲，这里只是占位）
 async function addDownloadedSongToPlaylist(song, failed = false) {
@@ -412,6 +422,80 @@ function setPlayButton(btnEl, song) {
   btnEl.onclick = () => playDownloadedSong(song);
 }
 
+function scheduleRenderQQDownloadTasks() {
+  if (qqDownloadRenderTimer) return;
+  qqDownloadRenderTimer = window.setTimeout(() => {
+    qqDownloadRenderTimer = null;
+    renderQQDownloadTasks();
+  }, 180);
+}
+
+function resetQQPreviewButton(btn) {
+  if (!btn) return;
+  btn.classList.remove('is-playing');
+  btn.innerHTML = '<i class="fas fa-headphones"></i> 试听';
+}
+
+async function previewQQSong(song, btnEl) {
+  if (!song?.mid) return;
+  const mid = String(song.mid);
+
+  if (activeQQPreviewMid === mid && ui.audio && !ui.audio.paused) {
+    ui.audio.pause();
+    activeQQPreviewMid = null;
+    resetQQPreviewButton(btnEl);
+    return;
+  }
+
+  try {
+    if (ui.audio && !ui.audio.paused) ui.audio.pause();
+    resetQQPreviewButton(activeQQPreviewBtn);
+    activeQQPreviewBtn = btnEl;
+    if (btnEl) {
+      btnEl.classList.add('is-playing');
+      btnEl.innerHTML = '<i class="fas fa-pause"></i> 停止';
+    }
+
+    const res = await api.qqmusic.songUrl(song.mid, 'MP3_128');
+    const url = res?.data?.[song.mid] || res?.data?.[String(song.mid)];
+    if (!res?.success || !url) {
+      activeQQPreviewMid = null;
+      resetQQPreviewButton(btnEl);
+      showToast(res?.error || '当前歌曲无法试听');
+      return;
+    }
+
+    const previewTrack = {
+      id: `qq_preview_${mid}`,
+      title: song.title || 'QQ 音乐试听',
+      artist: song.artist || 'QQ 音乐',
+      cover: song.cover || song.picUrl || '/static/images/ICON_256.PNG',
+      isExternal: true
+    };
+
+    if (ui.audio) ui.audio.volume = 0.85;
+    activeQQPreviewMid = mid;
+    const onStop = () => {
+      activeQQPreviewMid = null;
+      resetQQPreviewButton(activeQQPreviewBtn);
+      if (ui.audio) {
+        ui.audio.removeEventListener('ended', onStop);
+        ui.audio.removeEventListener('pause', onStop);
+      }
+    };
+    if (ui.audio) {
+      ui.audio.addEventListener('ended', onStop);
+      ui.audio.addEventListener('pause', onStop);
+    }
+    await playPreviewTrack(previewTrack, url);
+  } catch (err) {
+    console.error('preview qqmusic error', err);
+    activeQQPreviewMid = null;
+    resetQQPreviewButton(btnEl);
+    showToast('试听失败，请稍后重试');
+  }
+}
+
 function renderQQDownloadTasks() {
   const list = ui.qqmusicDownloadList;
   const tasks = state.qqmusicDownloadTasks;
@@ -471,7 +555,7 @@ function addQQDownloadTask(song, status = 'queued') {
   };
   state.qqmusicDownloadTasks.unshift(task);
   if (state.qqmusicDownloadTasks.length > 30) state.qqmusicDownloadTasks = state.qqmusicDownloadTasks.slice(0, 30);
-  renderQQDownloadTasks();
+  scheduleRenderQQDownloadTasks();
   return task.id;
 }
 
@@ -480,7 +564,7 @@ function updateQQDownloadTask(id, status, progress) {
   if (task) {
     task.status = status;
     if (progress !== undefined) task.progress = progress;
-    renderQQDownloadTasks();
+    scheduleRenderQQDownloadTasks();
   }
 }
 
@@ -579,6 +663,35 @@ function renderQQMusicResults() {
 
     const actions = document.createElement('div');
     actions.className = 'netease-actions';
+    const actionStack = document.createElement('div');
+    actionStack.className = 'song-action-stack';
+
+    const qualitySelect = document.createElement('select');
+    qualitySelect.className = 'song-quality-select';
+    QQ_QUALITY_OPTIONS.forEach(opt => {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      qualitySelect.appendChild(o);
+    });
+    qualitySelect.value = state.qqmusicQuality || 'MP3_128';
+
+    // 未登录仅允许标准音质，避免用户误解 VIP 限制
+    if (!state.qqmusicLoggedIn) {
+      Array.from(qualitySelect.options).forEach(opt => {
+        opt.disabled = opt.value !== 'MP3_128';
+      });
+      qualitySelect.value = 'MP3_128';
+    }
+
+    const actionButtons = document.createElement('div');
+    actionButtons.className = 'song-action-buttons';
+
+    const previewBtn = document.createElement('button');
+    previewBtn.className = 'btn-mini btn-preview';
+    previewBtn.innerHTML = '<i class="fas fa-headphones"></i> 试听';
+    previewBtn.onclick = () => previewQQSong(song, previewBtn);
+    actionButtons.appendChild(previewBtn);
 
     const isDownloaded = state.fullPlaylist && state.fullPlaylist.some(local => isSameSong(local, song));
     
@@ -590,7 +703,7 @@ function renderQQMusicResults() {
       const locked = document.createElement('div');
       locked.className = 'vip-locked';
       locked.innerHTML = '<i class="fas fa-lock"></i> VIP专享';
-      actions.appendChild(locked);
+      actionButtons.appendChild(locked);
     } else {
       const btn = document.createElement('button');
       if (isDownloaded) {
@@ -598,10 +711,14 @@ function renderQQMusicResults() {
       } else {
         btn.className = 'btn-primary';
         btn.innerHTML = '<i class="fas fa-download"></i> 下载';
-        btn.onclick = () => downloadQQSong(song, btn);
+        btn.onclick = () => downloadQQSong(song, btn, qualitySelect.value);
       }
-      actions.appendChild(btn);
+      actionButtons.appendChild(btn);
     }
+
+    actionStack.appendChild(qualitySelect);
+    actionStack.appendChild(actionButtons);
+    actions.appendChild(actionStack);
 
     card.appendChild(selectWrap);
     card.appendChild(cover);
@@ -628,7 +745,7 @@ function processQQDownloadQueue() {
     available--;
     startQQDownload(next);
   }
-  renderQQDownloadTasks();
+  scheduleRenderQQDownloadTasks();
 }
 
 async function startQQDownload({ taskId, song, btnEl, fileType }) {
@@ -692,9 +809,12 @@ async function startQQDownload({ taskId, song, btnEl, fileType }) {
             }
 
             if (currentTask) {
-              currentTask.status = tData.status;
-              currentTask.progress = tData.progress;
-              renderQQDownloadTasks();
+              const nextStatus = tData.status;
+              const nextProgress = tData.progress || 0;
+              const changed = currentTask.status !== nextStatus || currentTask.progress !== nextProgress;
+              currentTask.status = nextStatus;
+              currentTask.progress = nextProgress;
+              if (changed) scheduleRenderQQDownloadTasks();
 
               if (tData.status === 'success' || tData.status === 'error') {
                 clearInterval(pollTimer);
@@ -746,7 +866,7 @@ async function startQQDownload({ taskId, song, btnEl, fileType }) {
             processQQDownloadQueue();
           }
         }
-      }, 500); // 增加轮询间隔到 500ms
+      }, 800);
     } else {
       updateQQDownloadTask(taskId, 'error');
       showToast(res.error || '请求失败');
@@ -839,7 +959,7 @@ async function loadQQMusicRecommendations(forceReload = false) {
   }
 }
 
-async function downloadQQSong(song, btnEl) {
+async function downloadQQSong(song, btnEl, selectedQuality) {
   if (!song || !song.mid) return;
   // VIP 歌曲需要登录才能下载
   if (song.is_vip && !state.qqmusicLoggedIn) {
@@ -857,11 +977,11 @@ async function downloadQQSong(song, btnEl) {
   if (active < limit) {
     const taskId = addQQDownloadTask(song, 'pending');
     if (btnEl) { btnEl.disabled = true; btnEl.innerHTML = '<i class="fas fa-sync fa-spin"></i> 请求中'; }
-    startQQDownload({ taskId, song, btnEl });
+    startQQDownload({ taskId, song, btnEl, fileType: selectedQuality });
   } else {
     const taskId = addQQDownloadTask(song, 'queued');
     if (btnEl) { btnEl.disabled = true; btnEl.innerHTML = '<i class="fas fa-clock"></i> 排队中'; }
-    state.qqmusicPendingQueue.push({ taskId, song, btnEl });
+    state.qqmusicPendingQueue.push({ taskId, song, btnEl, fileType: selectedQuality });
   }
 }
 

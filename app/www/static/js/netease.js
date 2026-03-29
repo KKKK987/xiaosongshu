@@ -1,12 +1,38 @@
 import { state } from './state.js';
 import { ui } from './ui.js';
 import { api } from './api.js';
-import { playTrack } from './player.js';
+import { playTrack, playPreviewTrack } from './player.js';
 import { showToast, showConfirmDialog, hideProgressToast, formatTime } from './utils.js';
 
 // 网易云业务
 let songRefreshCallback = null;
 let recommendLoading = false;
+let activePreviewSongId = null;
+let activePreviewBtn = null;
+let downloadRenderTimer = null;
+
+const NETEASE_LEVEL_OPTIONS = [
+  { value: 'standard', label: '标准' },
+  { value: 'higher', label: '较高' },
+  { value: 'exhigh', label: '极高' },
+  { value: 'lossless', label: '无损' },
+  { value: 'hires', label: 'Hi-Res' },
+  { value: 'jyeffect', label: '环绕声' },
+  { value: 'sky', label: '沉浸环绕' },
+  { value: 'dolby', label: '杜比全景' },
+  { value: 'jymaster', label: '超清母带' }
+];
+const NETEASE_LEVEL_RANK = {
+  standard: 1,
+  higher: 2,
+  exhigh: 3,
+  lossless: 4,
+  hires: 5,
+  jyeffect: 6,
+  sky: 7,
+  dolby: 8,
+  jymaster: 9
+};
 
 const canDownloadSong = (song) => {
   if (!song) return false;
@@ -64,6 +90,87 @@ function setPlayButton(btnEl, song) {
   btnEl.style.cursor = 'pointer';
   btnEl.innerHTML = '<i class="fas fa-play"></i> 播放';
   btnEl.onclick = () => playDownloadedSong(song);
+}
+
+function scheduleRenderDownloadTasks() {
+  if (downloadRenderTimer) return;
+  downloadRenderTimer = window.setTimeout(() => {
+    downloadRenderTimer = null;
+    renderDownloadTasks();
+  }, 180);
+}
+
+function resetPreviewButton(btn) {
+  if (!btn) return;
+  btn.classList.remove('is-playing');
+  btn.innerHTML = '<i class="fas fa-headphones"></i> 试听';
+}
+
+function getNeteaseSelectableLevels(song) {
+  const maxLevel = normalizeLevel(song?.max_level || song?.level || 'standard');
+  const maxRank = NETEASE_LEVEL_RANK[maxLevel] || NETEASE_LEVEL_RANK.standard;
+  return NETEASE_LEVEL_OPTIONS.filter(opt => (NETEASE_LEVEL_RANK[opt.value] || 0) <= maxRank);
+}
+
+async function previewNeteaseSong(song, btnEl) {
+  if (!song?.id) return;
+  const sid = String(song.id);
+
+  if (activePreviewSongId === sid && ui.audio && !ui.audio.paused) {
+    ui.audio.pause();
+    activePreviewSongId = null;
+    resetPreviewButton(btnEl);
+    return;
+  }
+
+  try {
+    if (ui.audio && !ui.audio.paused) ui.audio.pause();
+    resetPreviewButton(activePreviewBtn);
+    activePreviewBtn = btnEl;
+    if (btnEl) {
+      btnEl.classList.add('is-playing');
+      btnEl.innerHTML = '<i class="fas fa-pause"></i> 停止';
+    }
+
+    const level = normalizeLevel(song.level || 'standard');
+    const res = await api.netease.songUrl(song.id, level);
+    const url = res?.data?.url;
+    if (!res?.success || !url) {
+      resetPreviewButton(btnEl);
+      activePreviewSongId = null;
+      showToast(res?.error || '当前歌曲无法试听');
+      return;
+    }
+
+    const previewTrack = {
+      id: `netease_preview_${sid}`,
+      title: song.title || '网易云试听',
+      artist: song.artist || '网易云音乐',
+      cover: song.cover || song.picUrl || '/static/images/ICON_256.PNG',
+      isExternal: true
+    };
+
+    if (ui.audio) ui.audio.volume = 0.85;
+    activePreviewSongId = sid;
+    const onStop = () => {
+      activePreviewSongId = null;
+      resetPreviewButton(activePreviewBtn);
+      if (ui.audio) {
+        ui.audio.removeEventListener('ended', onStop);
+        ui.audio.removeEventListener('pause', onStop);
+      }
+    };
+    if (ui.audio) {
+      ui.audio.addEventListener('ended', onStop);
+      ui.audio.addEventListener('pause', onStop);
+    }
+    await playPreviewTrack(previewTrack, url);
+  } catch (err) {
+    console.error('preview netease error', err);
+    activePreviewSongId = null;
+    resetPreviewButton(btnEl);
+    showToast('试听失败，请稍后重试');
+  }
 }
 
 function renderDownloadTasks() {
@@ -151,7 +258,7 @@ function addDownloadTask(song, status = 'queued') {
       }
     }
   }
-  renderDownloadTasks();
+  scheduleRenderDownloadTasks();
   return task.id;
 }
 
@@ -159,7 +266,7 @@ function updateDownloadTask(id, status) {
   const task = state.neteaseDownloadTasks.find(t => t.id === id);
   if (task) {
     task.status = status;
-    renderDownloadTasks();
+    scheduleRenderDownloadTasks();
   }
 }
 
@@ -294,15 +401,40 @@ function renderNeteaseResults() {
 
     const actions = document.createElement('div');
     actions.className = 'netease-actions';
+    const actionStack = document.createElement('div');
+    actionStack.className = 'song-action-stack';
 
     // 检查是否已下载
     const isDownloaded = state.fullPlaylist && state.fullPlaylist.some(local => isSameSong(local, song));
+    const qualitySelect = document.createElement('select');
+    qualitySelect.className = 'song-quality-select';
+    const selectableLevels = getNeteaseSelectableLevels(song);
+    const fallbackLevel = normalizeLevel(song.level || 'standard');
+    const selectedLevel = selectableLevels.find(opt => opt.value === fallbackLevel)
+      ? fallbackLevel
+      : (selectableLevels[0]?.value || 'standard');
+    selectableLevels.forEach(opt => {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      if (opt.value === selectedLevel) o.selected = true;
+      qualitySelect.appendChild(o);
+    });
+
+    const actionButtons = document.createElement('div');
+    actionButtons.className = 'song-action-buttons';
+
+    const previewBtn = document.createElement('button');
+    previewBtn.className = 'btn-mini btn-preview';
+    previewBtn.innerHTML = '<i class="fas fa-headphones"></i> 试听';
+    previewBtn.onclick = () => previewNeteaseSong(song, previewBtn);
+    actionButtons.appendChild(previewBtn);
 
     if (isVipSong && !canDownloadVip) {
       const locked = document.createElement('div');
       locked.className = 'vip-locked';
       locked.innerHTML = '<i class="fas fa-lock"></i> VIP专享';
-      actions.appendChild(locked);
+      actionButtons.appendChild(locked);
     } else {
       const btn = document.createElement('button');
       if (isDownloaded) {
@@ -310,10 +442,14 @@ function renderNeteaseResults() {
       } else {
         btn.className = 'btn-primary';
         btn.innerHTML = '<i class="fas fa-download"></i> 下载';
-        btn.onclick = () => downloadNeteaseSong(song, btn);
+        btn.onclick = () => downloadNeteaseSong(song, btn, qualitySelect.value);
       }
-      actions.appendChild(btn);
+      actionButtons.appendChild(btn);
     }
+
+    actionStack.appendChild(qualitySelect);
+    actionStack.appendChild(actionButtons);
+    actions.appendChild(actionStack);
 
     card.appendChild(selectWrap);
     card.appendChild(cover);
@@ -391,10 +527,11 @@ async function startNeteaseDownload({ taskId, song, btnEl }) {
               // 状态映射
               let newStatus = tData.status;
               if (newStatus === 'pending') newStatus = 'pending';
-
+              const nextProgress = tData.progress || 0;
+              const changed = currentTask.status !== newStatus || currentTask.progress !== nextProgress;
               currentTask.status = newStatus;
-              currentTask.progress = tData.progress;
-              renderDownloadTasks();
+              currentTask.progress = nextProgress;
+              if (changed) scheduleRenderDownloadTasks();
 
               if (newStatus === 'success' || newStatus === 'error') {
                 clearInterval(pollTimer);
@@ -437,7 +574,7 @@ async function startNeteaseDownload({ taskId, song, btnEl }) {
             processDownloadQueue();
           }
         }
-      }, 200);
+      }, 700);
 
     } else {
       updateDownloadTask(taskId, 'error');
@@ -453,13 +590,13 @@ async function startNeteaseDownload({ taskId, song, btnEl }) {
   }
 }
 
-async function downloadNeteaseSong(song, btnEl) {
+async function downloadNeteaseSong(song, btnEl, selectedLevel) {
   if (!song || !song.id) return;
   if (!canDownloadSong(song)) {
     showToast('VIP 歌曲仅登录会员可下载');
     return;
   }
-  const level = 'exhigh';
+  const level = normalizeLevel(selectedLevel || song.level || 'exhigh');
 
   // 检查是否有正在进行的相同任务
   const existingTask = state.neteaseDownloadTasks.find(t => String(t.songId) === String(song.id)
@@ -878,11 +1015,10 @@ async function parseNeteaseLink() {
 }
 
 async function bulkDownloadSelected() {
-  const level = 'exhigh';
   const targets = state.neteaseResults.filter(s => state.neteaseSelected.has(String(s.id)) && canDownloadSong(s));
   if (!targets.length) { showToast('请先选择歌曲'); return; }
   for (const s of targets) {
-    await downloadNeteaseSong({ ...s, level });
+    await downloadNeteaseSong({ ...s, level: normalizeLevel(s.level || 'standard') });
   }
 }
 
@@ -989,7 +1125,7 @@ function startNeteaseBulkDownload(songs) {
 
     const limit = state.neteaseMaxConcurrent || 20;
     const active = getActiveDownloadCount();
-    const payload = { ...song, level: 'exhigh' };
+    const payload = { ...song, level: normalizeLevel(song.level || 'standard') };
 
     if (active < limit) {
       const taskId = addDownloadTask(song, 'pending');

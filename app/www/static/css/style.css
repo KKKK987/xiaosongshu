@@ -3133,6 +3133,71 @@ select:focus {
     gap: 0.5rem;
 }
 
+.song-action-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.45rem;
+    min-width: 170px;
+}
+
+.song-action-buttons {
+    display: flex;
+    gap: 0.45rem;
+    align-items: center;
+}
+
+.song-quality-select {
+    width: 100%;
+    height: 2rem;
+    border-radius: 0.55rem;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(18, 20, 48, 0.92);
+    color: var(--text-main);
+    padding: 0 1.7rem 0 0.55rem;
+    font-size: 0.8rem;
+    line-height: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    color-scheme: dark;
+    background-image:
+        linear-gradient(45deg, transparent 50%, rgba(255, 255, 255, 0.75) 50%),
+        linear-gradient(135deg, rgba(255, 255, 255, 0.75) 50%, transparent 50%);
+    background-position:
+        calc(100% - 0.9rem) calc(50% - 0.12rem),
+        calc(100% - 0.6rem) calc(50% - 0.12rem);
+    background-size: 0.3rem 0.3rem, 0.3rem 0.3rem;
+    background-repeat: no-repeat;
+}
+
+.song-quality-select:focus {
+    border-color: rgba(255, 255, 255, 0.45);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
+}
+
+.song-quality-select option {
+    background: #1d2142;
+    color: #f3f5ff;
+}
+
+.song-quality-select option:disabled {
+    background: #272c4f;
+    color: rgba(243, 245, 255, 0.45);
+}
+
+.btn-preview {
+    white-space: nowrap;
+    border-radius: 2rem;
+}
+
+.btn-preview.is-playing {
+    background: rgba(255, 193, 7, 0.22);
+    border-color: rgba(255, 193, 7, 0.35);
+    color: #ffe082;
+}
+
 .vip-locked {
     display: inline-flex;
     align-items: center;
@@ -3230,6 +3295,24 @@ select:focus {
     .netease-actions {
         grid-column: 1 / -1;
         justify-content: flex-start;
+    }
+
+    .song-action-stack {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .song-action-buttons {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .song-action-buttons .btn-primary,
+    .song-action-buttons .btn-mini,
+    .song-action-buttons .vip-locked {
+        width: 100%;
+        justify-content: center;
     }
 
     .netease-download-floating {

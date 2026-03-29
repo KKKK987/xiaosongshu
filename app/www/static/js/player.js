@@ -201,46 +201,62 @@ export function renderPlaylist() {
     return;
   }
 
-  const frag = document.createDocumentFragment();
-  state.displayPlaylist.forEach((song, index) => {
-    const card = document.createElement('div');
-    card.className = 'song-card';
-    card.dataset.index = index;
-    if (song.isExternal) card.style.border = '1px dashed var(--primary)';
+  const batchSize = 120;
+  let cursor = 0;
 
-    // 使用 ID 判断收藏状态
-    const isFav = state.favorites.has(song.id);
+  const renderBatch = () => {
+    const frag = document.createDocumentFragment();
+    const end = Math.min(cursor + batchSize, state.displayPlaylist.length);
 
-    let favHtml = `<button class="card-fav-btn ${isFav ? 'active' : ''}" title="收藏"><i class="${isFav ? 'fas' : 'far'} fa-heart"></i></button>`;
-    let addHtml = `<button class="card-add-btn" title="添加到歌单"><i class="fas fa-plus"></i></button>`;
-    if (song.isExternal) { favHtml = ''; addHtml = ''; }
-    card.innerHTML = `${favHtml}${addHtml}<img src="${song.cover}" loading="lazy"><div class="card-info"><div class="title" title="${song.title}">${song.title}</div><div class="artist">${song.artist}</div></div>`;
+    for (; cursor < end; cursor++) {
+      const song = state.displayPlaylist[cursor];
+      const index = cursor;
+      const card = document.createElement('div');
+      card.className = 'song-card';
+      card.dataset.index = index;
+      if (song.isExternal) card.style.border = '1px dashed var(--primary)';
 
-    card.addEventListener('click', (e) => {
-      if (!e.target.closest('.card-fav-btn') && !e.target.closest('.card-add-btn')) {
-        state.playQueue = [...state.displayPlaylist];
-        state.currentPlayingPlaylistId = null;  // 清除歌单播放状态
-        playTrack(index);
+      // 使用 ID 判断收藏状态
+      const isFav = state.favorites.has(song.id);
+
+      let favHtml = `<button class="card-fav-btn ${isFav ? 'active' : ''}" title="收藏"><i class="${isFav ? 'fas' : 'far'} fa-heart"></i></button>`;
+      let addHtml = `<button class="card-add-btn" title="添加到歌单"><i class="fas fa-plus"></i></button>`;
+      if (song.isExternal) { favHtml = ''; addHtml = ''; }
+      card.innerHTML = `${favHtml}${addHtml}<img src="${song.cover}" loading="lazy"><div class="card-info"><div class="title" title="${song.title}">${song.title}</div><div class="artist">${song.artist}</div></div>`;
+
+      card.addEventListener('click', (e) => {
+        if (!e.target.closest('.card-fav-btn') && !e.target.closest('.card-add-btn')) {
+          state.playQueue = [...state.displayPlaylist];
+          state.currentPlayingPlaylistId = null;  // 清除歌单播放状态
+          playTrack(index);
+        }
+      });
+
+      if (!song.isExternal) {
+        const favBtn = card.querySelector('.card-fav-btn');
+        favBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          toggleFavorite(song, favBtn);
+        });
+
+        const addBtn = card.querySelector('.card-add-btn');
+        addBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showAddToPlaylistModal(song);
+        });
       }
-    });
-
-    if (!song.isExternal) {
-      const favBtn = card.querySelector('.card-fav-btn');
-      favBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleFavorite(song, favBtn);
-      });
-      
-      const addBtn = card.querySelector('.card-add-btn');
-      addBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        showAddToPlaylistModal(song);
-      });
+      frag.appendChild(card);
     }
-    frag.appendChild(card);
-  });
-  ui.songContainer.appendChild(frag);
-  highlightCurrentTrack();
+
+    ui.songContainer.appendChild(frag);
+    if (cursor < state.displayPlaylist.length) {
+      requestAnimationFrame(renderBatch);
+    } else {
+      highlightCurrentTrack();
+    }
+  };
+
+  renderBatch();
 }
 
 export function switchTab(tab) {
@@ -436,6 +452,26 @@ export async function playTrack(index, autoPlay = true) {
       // 播放历史将在 loadedmetadata 事件中记录（获取正确的时长）
     }
     catch (e) { console.error('Auto-play blocked:', e); state.isPlaying = false; updatePlayState(); }
+  }
+  persistState(ui.audio);
+}
+
+export async function playPreviewTrack(track, url) {
+  if (!track || !url) return;
+  state.currentFetchId++;
+  if (ui.audio.src !== url) ui.audio.src = url;
+  loadTrackInfo(track);
+  highlightCurrentTrack();
+
+  try {
+    await ui.audio.play();
+    state.isPlaying = true;
+    updatePlayState();
+    requestWakeLock();
+  } catch (e) {
+    state.isPlaying = false;
+    updatePlayState();
+    throw e;
   }
   persistState(ui.audio);
 }

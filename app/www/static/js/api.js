@@ -125,6 +125,10 @@ export const api = {
       const res = await fetch(`/api/netease/song?id=${encodeURIComponent(id)}`);
       return jsonOrThrow(res);
     },
+    async songUrl(id, level = 'standard') {
+      const res = await fetch(`/api/netease/song/url?id=${encodeURIComponent(id)}&level=${encodeURIComponent(level)}`);
+      return jsonOrThrow(res);
+    },
     async task(taskId) {
       const res = await fetch(`/api/netease/task/${encodeURIComponent(taskId)}`);
       return jsonOrThrow(res);
