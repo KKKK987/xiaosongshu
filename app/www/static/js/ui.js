@@ -106,6 +106,7 @@ export const ui = {
   btnNext: document.getElementById('btn-next'),
   progressBar: document.getElementById('progress-bar'),
   volumeSlider: document.getElementById('volume-slider'),
+  volumePercent: document.getElementById('volume-percent'),
   fpBtnPlay: document.getElementById('fp-btn-play'),
   fpBtnPrev: document.getElementById('fp-btn-prev'),
   fpBtnNext: document.getElementById('fp-btn-next'),

@@ -1,14 +1,33 @@
-// 后端 API 封装
+// 后端 API 封装 + 离线支持
+import { offlineManager } from './db.js';
+
 const jsonOrThrow = async (resp) => {
   const data = await resp.json();
   return data;
 };
 
+async function cachedFetch(url, cacheKey, ttl) {
+  try {
+    const res = await fetch(url);
+    const data = await jsonOrThrow(res);
+    if (data.success) {
+      offlineManager.set(cacheKey, data, ttl).catch(() => {});
+    }
+    return data;
+  } catch (e) {
+    const cached = await offlineManager.get(cacheKey);
+    if (cached) {
+      cached._fromCache = true;
+      return cached;
+    }
+    throw e;
+  }
+}
+
 export const api = {
   library: {
     async list() {
-      const res = await fetch('/api/music');
-      return jsonOrThrow(res);
+      return cachedFetch('/api/music', 'library_list', 5 * 60 * 1000);
     },
     async deleteFile(filename) {
       const encodedName = encodeURIComponent(filename);
@@ -148,8 +167,7 @@ export const api = {
   },
   favorites: {
     async list() {
-      const res = await fetch('/api/favorites');
-      return jsonOrThrow(res);
+      return cachedFetch('/api/favorites', 'favorites_list', 5 * 60 * 1000);
     },
     async add(id) {
       const res = await fetch(`/api/favorites/${encodeURIComponent(id)}`, { method: 'POST' });
@@ -244,8 +262,7 @@ export const api = {
   },
   playlists: {
     async list() {
-      const res = await fetch('/api/playlists');
-      return jsonOrThrow(res);
+      return cachedFetch('/api/playlists', 'playlists_list', 5 * 60 * 1000);
     },
     async create(name) {
       const res = await fetch('/api/playlists', {

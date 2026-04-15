@@ -382,6 +382,17 @@
                         </div>
 
                         <div class="settings-section glass-panel">
+                            <h4>离线与缓存</h4>
+                            <div class="setting-row">
+                                <label>离线支持 (PWA)</label>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-offline-support" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="settings-section glass-panel">
                             <h4>外观设置</h4>
                             <div class="setting-row">
                                 <label>全局缩放 (当前: <span id="setting-scale-value">自动</span>)</label>
@@ -551,6 +562,7 @@
                     <i class="fas fa-volume-up" id="vol-icon"></i>
                 </button>
                 <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="1">
+                <span id="volume-percent">100%</span>
             </div>
 
             <button id="mobile-mini-play" class="icon-btn" style="display: none; font-size: 1.5rem; padding: 1rem;">
@@ -814,7 +826,9 @@
 
                         if (displayList.length > 0) {
                             let html = '';
-                            displayList.forEach((song, index) => {
+                            const preRenderCount = Math.min(displayList.length, 36);
+                            for (let index = 0; index < preRenderCount; index++) {
+                                const song = displayList[index];
                                 const isFav = favs.has(song.id);
                                 const isExt = song.isExternal;
                                 let favHtml = `<button class="card-fav-btn ${isFav ? 'active' : ''}">${isFav ? '<i class="fas fa-heart"></i>' : '<i class="far fa-heart"></i>'}</button>`;
@@ -829,7 +843,7 @@
                                         <div class="artist">${song.artist || '未知艺术家'}</div>
                                     </div>
                                 </div>`;
-                            });
+                            }
                             container.innerHTML = html;
                         } else if (tab === 'fav') {
                             container.innerHTML = `<div class="loading-text" style="grid-column: 1/-1; padding: 4rem 0; font-size: 1.1rem; opacity: 0.6;">暂无收藏歌曲</div>`;

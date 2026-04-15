@@ -8,6 +8,28 @@ import { initMounts, loadMountPoints, startScanPolling } from './mounts.js';
 import { initPlayer, loadSongs, performDelete, handleExternalFile, renderPlaylist, switchTab } from './player.js';
 import { initAdmin } from './admin.js';
 
+// Service Worker 注册
+async function registerServiceWorker() {
+  if ('serviceWorker' in navigator) {
+    try {
+      await navigator.serviceWorker.register('/static/js/service-worker.js', { scope: '/' });
+      console.log('[Main] Service Worker 注册成功 - 离线支持已启用');
+    } catch (err) {
+      console.warn('[Main] Service Worker 注册失败:', err.message);
+    }
+  }
+}
+
+async function unregisterServiceWorker() {
+  if ('serviceWorker' in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    for (const reg of registrations) {
+      await reg.unregister();
+    }
+    console.log('[Main] Service Worker 已注销');
+  }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   // UI 适配与基础防护
   autoResizeUI();
@@ -244,6 +266,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  // 离线支持开关
+  const offlineToggle = document.getElementById('setting-offline-support');
+  if (offlineToggle) {
+    offlineToggle.checked = state.offlineSupport !== false;
+    offlineToggle.addEventListener('change', (e) => {
+      state.offlineSupport = e.target.checked;
+      localStorage.setItem('xiaosongshu_offline_support', e.target.checked ? 'true' : 'false');
+      if (e.target.checked) {
+        registerServiceWorker();
+        showToast('离线支持已启用');
+      } else {
+        unregisterServiceWorker();
+        showToast('离线支持已关闭');
+      }
+    });
+  }
+
   // 初始化模块
   initMounts(loadSongs);
   await initPlayer();   // 优先初始化播放器，确保缓存秒开
@@ -252,4 +291,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   initAdmin();  // 初始化管理员模块
   loadMountPoints();
   startScanPolling(false, (r) => loadSongs(r, false), loadMountPoints);
+
+  // 根据设置注册 Service Worker
+  if (state.offlineSupport !== false) {
+    await registerServiceWorker();
+  } else {
+    await unregisterServiceWorker();
+  }
 });

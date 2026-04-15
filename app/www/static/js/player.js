@@ -4,7 +4,174 @@ import { api } from './api.js';
 import { showToast, showConfirmDialog, hideProgressToast, updateDetailFavButton, formatTime, renderNoLyrics, updateSliderFill, flyToElement, throttle, extractColorFromImage } from './utils.js';
 import { startScanPolling, loadMountPoints } from './mounts.js';
 
-// 收藏
+// ===================== Virtual Scroll =====================
+const _vs = {
+  scrollParent: null,
+  colCount: 1,
+  rowHeight: 180,
+  gap: 19,
+  totalRows: 0,
+  overscan: 4,
+  lastStartRow: -1,
+  lastEndRow: -1,
+  filteredIndices: null,
+  initialized: false,
+  rafId: 0,
+};
+
+function vsInit() {
+  _vs.scrollParent = document.getElementById('main-content');
+  if (!_vs.scrollParent || !ui.songContainer) return;
+  _vs.scrollParent.addEventListener('scroll', _vsSchedule, { passive: true });
+  let resizeTimer = 0;
+  const ro = new ResizeObserver(() => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { vsMeasure(); _vsForceUpdate(); }, 150);
+  });
+  ro.observe(ui.songContainer);
+  _vs.initialized = true;
+}
+
+function vsMeasure() {
+  const c = ui.songContainer;
+  if (!c || !c.offsetParent) return;
+
+  const saved = [c.style.paddingTop, c.style.paddingBottom, c.style.minHeight];
+  c.style.paddingTop = '0';
+  c.style.paddingBottom = '0';
+  c.style.minHeight = '0';
+
+  const probe = document.createElement('div');
+  probe.className = 'song-card';
+  probe.innerHTML = '<img src="/static/images/ICON_256.PNG"><div class="card-info"><div class="title">X</div><div class="artist">X</div></div>';
+  c.appendChild(probe);
+
+  const pr = probe.getBoundingClientRect();
+  const cs = getComputedStyle(c);
+  const cr = c.getBoundingClientRect();
+
+  _vs.rowHeight = pr.height;
+  const rg = parseFloat(cs.rowGap) || parseFloat(cs.gap) || 0;
+  const cg = parseFloat(cs.columnGap) || parseFloat(cs.gap) || 0;
+  _vs.gap = rg;
+
+  if (window.innerWidth <= 768) {
+    _vs.colCount = 1;
+  } else {
+    _vs.colCount = Math.max(1, Math.floor((cr.width + cg) / (pr.width + cg)));
+  }
+
+  c.removeChild(probe);
+  [c.style.paddingTop, c.style.paddingBottom, c.style.minHeight] = saved;
+}
+
+function _vsSchedule() {
+  if (_vs.rafId) return;
+  _vs.rafId = requestAnimationFrame(() => { _vs.rafId = 0; _vsUpdate(false); });
+}
+
+function _vsForceUpdate() { _vsUpdate(true); }
+
+function _vsUpdate(force) {
+  if (!_vs.scrollParent || !ui.songContainer || !ui.songContainer.offsetParent) return;
+  if (_vs.totalRows === 0) return;
+
+  const spRect = _vs.scrollParent.getBoundingClientRect();
+  const cRect = ui.songContainer.getBoundingClientRect();
+  const relTop = spRect.top - cRect.top;
+  const relBot = relTop + spRect.height;
+  const ru = _vs.rowHeight + _vs.gap;
+  if (ru <= 0) return;
+
+  let s = Math.max(0, Math.floor(relTop / ru) - _vs.overscan);
+  let e = Math.min(_vs.totalRows - 1, Math.ceil(relBot / ru) + _vs.overscan);
+  if (e < 0) e = 0;
+
+  if (!force && s === _vs.lastStartRow && e === _vs.lastEndRow) return;
+  _vs.lastStartRow = s;
+  _vs.lastEndRow = e;
+  _vsRender(s, e);
+}
+
+function _vsRender(startRow, endRow) {
+  const n = _vsItemCount();
+  const si = startRow * _vs.colCount;
+  const ei = Math.min((endRow + 1) * _vs.colCount, n);
+  const ru = _vs.rowHeight + _vs.gap;
+
+  const frag = document.createDocumentFragment();
+  for (let i = si; i < ei; i++) {
+    const oi = _vs.filteredIndices ? _vs.filteredIndices[i] : i;
+    const song = state.displayPlaylist[oi];
+    if (!song) continue;
+    frag.appendChild(_vsCard(song, oi));
+  }
+
+  const topPad = startRow * ru;
+  const rows = endRow - startRow + 1;
+  const rh = rows * ru - _vs.gap;
+  const total = _vs.totalRows * ru - (_vs.totalRows > 0 ? _vs.gap : 0);
+  const bottomPad = Math.max(0, total - topPad - rh);
+
+  ui.songContainer.innerHTML = '';
+  ui.songContainer.style.paddingTop = topPad + 'px';
+  ui.songContainer.style.paddingBottom = bottomPad + 'px';
+  ui.songContainer.style.minHeight = '0';
+  ui.songContainer.appendChild(frag);
+  highlightCurrentTrack();
+}
+
+function _vsItemCount() {
+  return _vs.filteredIndices ? _vs.filteredIndices.length : state.displayPlaylist.length;
+}
+
+function _vsCard(song, index) {
+  const card = document.createElement('div');
+  card.className = 'song-card';
+  card.dataset.index = index;
+  if (song.isExternal) card.style.border = '1px dashed var(--primary)';
+  const isFav = state.favorites.has(song.id);
+  let favHtml = `<button class="card-fav-btn ${isFav ? 'active' : ''}" title="收藏"><i class="${isFav ? 'fas' : 'far'} fa-heart"></i></button>`;
+  let addHtml = `<button class="card-add-btn" title="添加到歌单"><i class="fas fa-plus"></i></button>`;
+  if (song.isExternal) { favHtml = ''; addHtml = ''; }
+  card.innerHTML = `${favHtml}${addHtml}<img src="${song.cover}" loading="lazy"><div class="card-info"><div class="title" title="${song.title}">${song.title}</div><div class="artist">${song.artist}</div></div>`;
+  card.addEventListener('click', (e) => {
+    if (!e.target.closest('.card-fav-btn') && !e.target.closest('.card-add-btn')) {
+      state.playQueue = [...state.displayPlaylist];
+      state.currentPlayingPlaylistId = null;
+      playTrack(index);
+    }
+  });
+  if (!song.isExternal) {
+    const favBtn = card.querySelector('.card-fav-btn');
+    favBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleFavorite(song, favBtn); });
+    const addBtn = card.querySelector('.card-add-btn');
+    addBtn.addEventListener('click', (e) => { e.stopPropagation(); showAddToPlaylistModal(song); });
+  }
+  return card;
+}
+
+function vsSetData(filteredIndices) {
+  _vs.filteredIndices = filteredIndices;
+  _vs.totalRows = Math.ceil(_vsItemCount() / Math.max(1, _vs.colCount));
+  _vs.lastStartRow = -1;
+  _vs.lastEndRow = -1;
+}
+
+function vsScrollToIndex(originalIdx) {
+  let vi = _vs.filteredIndices ? _vs.filteredIndices.indexOf(originalIdx) : originalIdx;
+  if (vi === -1 || vi >= _vsItemCount()) return false;
+  const row = Math.floor(vi / _vs.colCount);
+  const ru = _vs.rowHeight + _vs.gap;
+  const cRect = ui.songContainer.getBoundingClientRect();
+  const spRect = _vs.scrollParent.getBoundingClientRect();
+  const cOff = _vs.scrollParent.scrollTop + cRect.top - spRect.top;
+  const target = cOff + row * ru - _vs.scrollParent.clientHeight / 2 + _vs.rowHeight / 2;
+  _vs.scrollParent.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+  return true;
+}
+// ===================== End Virtual Scroll =====================
+
 // 收藏 (Server Sync)
 async function toggleFavorite(song, btnEl) {
   if (!song.id) return;
@@ -194,69 +361,17 @@ export async function handleExternalFile() {
 
 export function renderPlaylist() {
   if (!ui.songContainer) return;
-  ui.songContainer.innerHTML = '';
   if (state.currentTab === 'fav') { state.displayPlaylist = state.fullPlaylist.filter(s => state.favorites.has(s.id)); } else { state.displayPlaylist = state.fullPlaylist; }
   if (state.displayPlaylist.length === 0) {
     ui.songContainer.innerHTML = `<div class="loading-text" style="grid-column: 1/-1; padding: 4rem 0; font-size: 1.1rem; opacity: 0.6;">${state.currentTab === 'fav' ? '暂无收藏歌曲' : '暂无歌曲'}</div>`;
+    ui.songContainer.style.paddingTop = '0';
+    ui.songContainer.style.paddingBottom = '0';
     return;
   }
-
-  const batchSize = 120;
-  let cursor = 0;
-
-  const renderBatch = () => {
-    const frag = document.createDocumentFragment();
-    const end = Math.min(cursor + batchSize, state.displayPlaylist.length);
-
-    for (; cursor < end; cursor++) {
-      const song = state.displayPlaylist[cursor];
-      const index = cursor;
-      const card = document.createElement('div');
-      card.className = 'song-card';
-      card.dataset.index = index;
-      if (song.isExternal) card.style.border = '1px dashed var(--primary)';
-
-      // 使用 ID 判断收藏状态
-      const isFav = state.favorites.has(song.id);
-
-      let favHtml = `<button class="card-fav-btn ${isFav ? 'active' : ''}" title="收藏"><i class="${isFav ? 'fas' : 'far'} fa-heart"></i></button>`;
-      let addHtml = `<button class="card-add-btn" title="添加到歌单"><i class="fas fa-plus"></i></button>`;
-      if (song.isExternal) { favHtml = ''; addHtml = ''; }
-      card.innerHTML = `${favHtml}${addHtml}<img src="${song.cover}" loading="lazy"><div class="card-info"><div class="title" title="${song.title}">${song.title}</div><div class="artist">${song.artist}</div></div>`;
-
-      card.addEventListener('click', (e) => {
-        if (!e.target.closest('.card-fav-btn') && !e.target.closest('.card-add-btn')) {
-          state.playQueue = [...state.displayPlaylist];
-          state.currentPlayingPlaylistId = null;  // 清除歌单播放状态
-          playTrack(index);
-        }
-      });
-
-      if (!song.isExternal) {
-        const favBtn = card.querySelector('.card-fav-btn');
-        favBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          toggleFavorite(song, favBtn);
-        });
-
-        const addBtn = card.querySelector('.card-add-btn');
-        addBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          showAddToPlaylistModal(song);
-        });
-      }
-      frag.appendChild(card);
-    }
-
-    ui.songContainer.appendChild(frag);
-    if (cursor < state.displayPlaylist.length) {
-      requestAnimationFrame(renderBatch);
-    } else {
-      highlightCurrentTrack();
-    }
-  };
-
-  renderBatch();
+  if (!_vs.initialized) vsInit();
+  vsMeasure();
+  vsSetData(null);
+  _vsUpdate(true);
 }
 
 export function switchTab(tab) {
@@ -478,6 +593,8 @@ export async function playPreviewTrack(track, url) {
 
 function loadTrackInfo(track) {
   if (!track) return;
+  _lastLyricIdx = -1;
+  _activeLyricEl = null;
   ['current-title', 'fp-title'].forEach(id => { const el = document.getElementById(id); if (el) el.innerText = track.title; });
   ['current-artist', 'fp-artist'].forEach(id => { const el = document.getElementById(id); if (el) el.innerText = track.artist; });
   const coverSrc = track.cover || '/static/images/ICON_256.PNG';
@@ -494,11 +611,17 @@ function highlightCurrentTrack() {
   if (!ui.audio.src) return;
   const currentSong = state.playQueue[state.currentTrackIndex];
   if (!currentSong) return;
-  document.querySelectorAll('.song-card').forEach((card, i) => {
-    const track = state.displayPlaylist[i];
-    if (track && track.filename === currentSong.filename) card.classList.add('active');
-    else card.classList.remove('active');
-  });
+
+  // 先移除旧高亮
+  const prev = ui.songContainer?.querySelector('.song-card.active');
+  if (prev) prev.classList.remove('active');
+
+  // 精准定位新高亮
+  const idx = state.displayPlaylist.findIndex(s => s.filename === currentSong.filename);
+  if (idx !== -1) {
+    const card = ui.songContainer?.querySelector(`.song-card[data-index="${idx}"]`);
+    if (card) card.classList.add('active');
+  }
 }
 
 function togglePlayMode() { state.playMode = (state.playMode + 1) % 3; updatePlayModeUI(); persistState(ui.audio); }
@@ -567,6 +690,7 @@ ui.audio.addEventListener('ended', () => {
 let lastVolume = 1.0;
 function updateVolumeUI(val) {
   if (ui.volumeSlider) { ui.volumeSlider.value = val; updateSliderFill(ui.volumeSlider); }
+  if (ui.volumePercent) ui.volumePercent.textContent = `${Math.round(val * 100)}%`;
   updateVolumeIcon(val);
 }
 
@@ -581,28 +705,38 @@ function toggleMute() {
 
 updateSliderFill(ui.progressBar); updateSliderFill(ui.fpProgressBar); updateSliderFill(ui.volumeSlider);
 ui.audio.addEventListener('pause', () => persistState(ui.audio)); // 暂停时保存
+let _lastLyricIdx = -1;
+let _activeLyricEl = null;
+
+function findLyricIndex(time) {
+  const data = state.lyricsData;
+  let lo = 0, hi = data.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (data[mid].time <= time) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return hi < 0 ? 0 : hi;
+}
+
 ui.audio.addEventListener('timeupdate', () => {
-  throttledPersist(); // 定期保存
+  throttledPersist();
   if (!ui.audio.duration) return;
 
-  // Process lyrics always
   if (state.lyricsData.length) {
-    let idx = state.lyricsData.findIndex(l => l.time > ui.audio.currentTime);
-    idx = idx === -1 ? state.lyricsData.length - 1 : idx - 1;
-    // Before first lyric, highlight the first line (intro)
-    if (idx < 0) idx = 0;
-
-    if (idx >= 0) {
-      const currentLine = ui.lyricsContainer?.querySelector(`.lyric-line[data-index="${idx}"]`);
-      if (currentLine && !currentLine.classList.contains('active')) {
-        document.querySelectorAll('.lyric-line.active').forEach(l => l.classList.remove('active'));
-        currentLine.classList.add('active');
-        currentLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const idx = findLyricIndex(ui.audio.currentTime);
+    if (idx !== _lastLyricIdx) {
+      _lastLyricIdx = idx;
+      const nextLine = ui.lyricsContainer?.querySelector(`.lyric-line[data-index="${idx}"]`);
+      if (nextLine && nextLine !== _activeLyricEl) {
+        if (_activeLyricEl) _activeLyricEl.classList.remove('active');
+        nextLine.classList.add('active');
+        nextLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        _activeLyricEl = nextLine;
       }
     }
   }
 
-  // Only update sliders if not dragging
   if (!isDragging) {
     const percent = (ui.audio.currentTime / ui.audio.duration) * 100;
     const timeStr = formatTime(ui.audio.currentTime);
@@ -701,9 +835,14 @@ async function checkAndFetchMetadata(track, fetchId) {
       if (fetchId !== state.currentFetchId) return;
       if (d.success && d.album_art) {
         track.cover = d.album_art;
-        savePlaylist(); // 保存封面更新
+        savePlaylist();
         if (ui.audio.src.includes(encodeURIComponent(track.id))) { ['current-cover', 'fp-cover'].forEach(id => { const el = document.getElementById(id); if (el) el.src = track.cover; }); }
-        renderPlaylist();
+        // 只更新对应卡片的封面，不重建整个列表
+        const idx = state.displayPlaylist.findIndex(s => s.filename === track.filename);
+        if (idx !== -1) {
+          const card = ui.songContainer?.querySelector(`.song-card[data-index="${idx}"] img`);
+          if (card) card.src = track.cover;
+        }
       }
     } catch (e) { }
   };
@@ -834,23 +973,38 @@ export function bindPlayerEvents() {
 
   ui.searchInput?.addEventListener('input', (e) => {
     const term = e.target.value.toLowerCase().trim();
-    document.querySelectorAll('.song-card').forEach(card => {
-      const index = card.dataset.index;
-      const song = state.displayPlaylist[index];
-      const match = song.title.toLowerCase().includes(term) || song.artist.toLowerCase().includes(term);
-      if (match) card.classList.remove('hidden'); else card.classList.add('hidden');
+    if (!_vs.initialized) return;
+    if (!term) { vsSetData(null); _vsUpdate(true); return; }
+    const filtered = [];
+    state.displayPlaylist.forEach((song, i) => {
+      if (song.title.toLowerCase().includes(term) || song.artist.toLowerCase().includes(term)) filtered.push(i);
     });
+    vsSetData(filtered);
+    _vsUpdate(true);
   });
+
+  const handleVolumeWheel = (e) => {
+    e.preventDefault();
+    const current = parseFloat(ui.volumeSlider?.value || ui.audio.volume || 0);
+    const step = 0.05;
+    const delta = e.deltaY < 0 ? step : -step;
+    const next = Math.max(0, Math.min(1, current + delta));
+    ui.audio.volume = next;
+    updateVolumeUI(next);
+    persistState(ui.audio);
+  };
 
   if (ui.volumeSlider) {
     ui.volumeSlider.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       ui.audio.volume = val;
-      updateSliderFill(ui.volumeSlider);
-      updateVolumeIcon(val);
+      updateVolumeUI(val);
     });
     ui.volumeSlider.addEventListener('change', () => persistState(ui.audio));
+    ui.volumeSlider.addEventListener('wheel', handleVolumeWheel, { passive: false });
   }
+  ui.btnMute?.addEventListener('wheel', handleVolumeWheel, { passive: false });
+  ui.volIcon?.addEventListener('wheel', handleVolumeWheel, { passive: false });
   ui.btnMute?.addEventListener('click', toggleMute);
   updatePlayModeUI();
   updateVolumeUI(ui.audio.volume);
@@ -1106,54 +1260,28 @@ export function bindUiControls() {
 // 定位当前播放歌曲
 function locateCurrentPlayingSong() {
   const currentSong = state.playQueue[state.currentTrackIndex];
-  if (!currentSong) {
-    showToast('当前没有播放歌曲');
-    return;
-  }
-  
-  // 切换到本地音乐标签页
-  if (state.currentTab !== 'local') {
-    switchTab('local');
-  }
-  
-  // 清除搜索框
-  if (ui.searchInput) {
-    ui.searchInput.value = '';
-  }
-  
-  // 重新渲染完整列表
+  if (!currentSong) { showToast('当前没有播放歌曲'); return; }
+
+  if (state.currentTab !== 'local') switchTab('local');
+  if (ui.searchInput) ui.searchInput.value = '';
+
   state.displayPlaylist = [...state.fullPlaylist];
-  renderPlaylist();
-  
-  // 延迟执行滚动，等待渲染完成
+  if (!_vs.initialized) vsInit();
+  vsMeasure();
+  vsSetData(null);
+
+  const idx = state.displayPlaylist.findIndex(s => s.id === currentSong.id);
+  if (idx === -1) { showToast('未找到当前播放歌曲'); _vsUpdate(true); return; }
+
+  vsScrollToIndex(idx);
+  showToast(`已定位到: ${currentSong.title}`);
   setTimeout(() => {
-    // 找到当前播放歌曲的卡片
-    const songCards = ui.songContainer?.querySelectorAll('.song-card');
-    if (!songCards) return;
-    
-    let targetCard = null;
-    songCards.forEach(card => {
-      const idx = parseInt(card.dataset.index);
-      if (state.displayPlaylist[idx]?.id === currentSong.id) {
-        targetCard = card;
-      }
-    });
-    
-    if (targetCard) {
-      // 滚动到目标卡片
-      targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      
-      // 添加高亮动画
-      targetCard.classList.add('highlight-pulse');
-      setTimeout(() => {
-        targetCard.classList.remove('highlight-pulse');
-      }, 2000);
-      
-      showToast(`已定位到: ${currentSong.title}`);
-    } else {
-      showToast('未找到当前播放歌曲');
-    }
-  }, 100);
+    _vsUpdate(true);
+    setTimeout(() => {
+      const card = ui.songContainer?.querySelector(`.song-card[data-index="${idx}"]`);
+      if (card) { card.classList.add('highlight-pulse'); setTimeout(() => card.classList.remove('highlight-pulse'), 2000); }
+    }, 100);
+  }, 50);
 }
 
 export async function initPlayer() {

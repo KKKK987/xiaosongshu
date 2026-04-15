@@ -150,7 +150,6 @@ async function previewNeteaseSong(song, btnEl) {
       isExternal: true
     };
 
-    if (ui.audio) ui.audio.volume = 0.85;
     activePreviewSongId = sid;
     const onStop = () => {
       activePreviewSongId = null;

@@ -441,6 +441,7 @@ body::before {
     gap: 1.2rem;
     min-height: 60vh;
     align-content: start;
+    box-sizing: border-box;
 }
 
 .song-card {
@@ -1124,6 +1125,14 @@ input[type=range]::-webkit-slider-thumb {
     flex: 0 0 4rem !important;
     width: 4rem;
     margin-right: 1rem;
+}
+
+#volume-percent {
+    min-width: 2.8rem;
+    text-align: right;
+    font-size: 0.82rem;
+    color: var(--text-sub);
+    font-variant-numeric: tabular-nums;
 }
 
 /* --- 全屏播放页 --- */
@@ -4376,6 +4385,51 @@ select:focus {
     margin-bottom: 1.2rem;
     color: var(--primary);
     font-size: 1.1rem;
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    cursor: pointer;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    transition: 0.3s;
+}
+
+.toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    left: 3px;
+    bottom: 3px;
+    background: #fff;
+    border-radius: 50%;
+    transition: 0.3s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background: var(--primary);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(20px);
 }
 
 .setting-row {

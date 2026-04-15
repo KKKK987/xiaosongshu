@@ -473,7 +473,6 @@ async function previewQQSong(song, btnEl) {
       isExternal: true
     };
 
-    if (ui.audio) ui.audio.volume = 0.85;
     activeQQPreviewMid = mid;
     const onStop = () => {
       activeQQPreviewMid = null;

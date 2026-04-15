@@ -51,6 +51,8 @@ export const state = {
   lastPlaylistScrollInfo: null,  // { playlistId, songTitle, songArtist }
   // 当前播放的歌单信息（用于展开歌单时自动定位）
   currentPlayingPlaylistId: null,  // 当前正在播放的歌单ID
+  // 离线支持
+  offlineSupport: localStorage.getItem('xiaosongshu_offline_support') !== 'false',
 };
 
 export function persistState(audio) {
@@ -73,6 +75,15 @@ export function saveFavorites() {
   localStorage.setItem('xiaosongshu_favs', JSON.stringify([...state.favorites]));
 }
 
+let _savePlaylistTimer = null;
 export function savePlaylist() {
-  localStorage.setItem('xiaosongshu_playlist', JSON.stringify(state.fullPlaylist));
+  if (_savePlaylistTimer) return;
+  _savePlaylistTimer = setTimeout(() => {
+    _savePlaylistTimer = null;
+    try {
+      localStorage.setItem('xiaosongshu_playlist', JSON.stringify(state.fullPlaylist));
+    } catch (e) {
+      console.warn('savePlaylist failed:', e);
+    }
+  }, 3000);
 }
